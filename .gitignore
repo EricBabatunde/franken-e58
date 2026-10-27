@@ -1,0 +1,5 @@
+.pio/
+.venv/
+sdkconfig.*
+!sdkconfig.defaults
+.claude/settings.local.json

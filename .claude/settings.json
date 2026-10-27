@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio run)",
+      "Bash(pio run -t clean)",
+      "Bash(pio pkg list)",
+      "Bash(pio device list)",
+      "Bash(tools/verify_sdkconfig.sh:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Bash(pio run -t upload:*)",
+      "Bash(pio run --target upload:*)",
+      "Bash(pio device monitor:*)",
+      "Bash(rm -rf:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
