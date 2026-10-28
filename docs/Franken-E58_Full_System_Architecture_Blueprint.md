@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.2. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.3. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -57,6 +57,16 @@ Valid window for 400 kHz Fast-mode at 3.3 V with about 50 pF bus capacitance:
 $$t_r \approx 0.8473\,R_p C_b < 300\,\text{ns} \;\Rightarrow\; R_p \lesssim 7\,\text{k}\Omega, \qquad R_p \gtrsim \frac{V_{DD}-0.4\,\text{V}}{3\,\text{mA}} \approx 0.97\,\text{k}\Omega$$
 
 All combinations above sit inside 1 to 7 kΩ. Final PCB pull-up values are chosen in Phase 2 with the same formula.
+
+### 2.3 Board verification (Module 1 boot log)
+
+| Item | Result |
+|---|---|
+| Flash | 16 MB, generic chip, running DIO at 80 MHz (QIO enable failed) |
+| PSRAM | 8 MB octal (AP, 64 Mbit), 40 MHz |
+| CPU | Dual core, 240 MHz, chip revision v0.2 |
+| Consoles | UART0 (GPIO 43/44) and native USB Serial/JTAG both print the same log. Native socket enumerates as `303a:1001` |
+| Reset reason on power-up | Power-on, no brownout |
 
 ---
 
@@ -145,7 +155,7 @@ Each motor has an independent low-side switch:
 
 * **Build:** VS Code + PlatformIO on Ubuntu, targeting ESP32-S3 (N16R8), using the official `espressif32` platform with **`framework = espidf`** (pure ESP-IDF 5.x). Arduino is not used.
 * **ESP-IDF only:** application entry is `app_main()`. All drivers (I²C master, MCPWM, GPIO ISR, GPTimer, ADC) are written directly against **ESP-IDF 5.x APIs**. Every module introduces the IDF API it uses, with the relevant documentation and Technical Reference Manual references, so the project doubles as an ESP-IDF learning path.
-* **Platform pinning:** Module 1 pins the official `espressif32` platform version in `platformio.ini` after the first successful build. `pio pkg list` reports the `framework-espidf` version (expected ESP-IDF 5.4.x, to be verified), and every `sdkconfig.defaults` name is verified against it.
+* **Platform pinning:** `platformio.ini` pins `platform = espressif32 @ 6.13.0`, which ships `framework-espidf` 5.5.3 (ESP-IDF 5.5.3). The platform is never left unpinned: later releases (7.x and 8.x) move to ESP-IDF 6.x, which renames options and splits components, and would need a blueprint diff. Component dependencies use the split names (`esp_driver_gpio`, `esp_driver_rmt`, `esp_driver_i2c`, `esp_driver_mcpwm`, `esp_driver_gptimer`, `esp_adc`), never the legacy `driver` catch-all. Every `sdkconfig.defaults` name is verified against the generated config.
 * **Host tools:** Python 3 virtual environment with `numpy`, `scipy`, `matplotlib`, `pyserial` and `websockets` for logging, latency and FFT work.
 * **Linux setup:** user in the `dialout` group, and a udev rule for the Espressif USB device (VID `303a`).
 * **Logging:** USB Serial/JTAG (native USB) for bench work. Baud rate is irrelevant on native USB, which runs at full-speed USB. The same binary frames go out over UDP once USB is disconnected.
@@ -305,7 +315,8 @@ Names are verified against the pinned IDF version during Module 1 (via `menuconf
 * `CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y`, `CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y`, `CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y`
 * `CONFIG_ESP_WIFI_IRAM_OPT=y`, `CONFIG_ESP_WIFI_RX_IRAM_OPT=y`
 * `CONFIG_I2C_ISR_IRAM_SAFE=y`, `CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y`, `CONFIG_MCPWM_ISR_IRAM_SAFE=y`, `CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y`
-* `CONFIG_COMPILER_OPTIMIZATION_PERF=y`, 240 MHz CPU
+* `CONFIG_COMPILER_OPTIMIZATION_PERF=y`, 240 MHz CPU (`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y`)
+* Flash mode **DIO at 80 MHz** (`CONFIG_ESPTOOLPY_FLASHMODE_DIO=y`): this board's flash chip is detected as generic and the bootloader cannot set its QIO enable bit
 * Brownout detector enabled, with the level chosen by measurement
 * Task watchdog enabled, with a timeout tuned in Module 7
 * 16 MB flash, octal PSRAM, custom partition table (factory app plus a LittleFS partition of about 1 MB)
@@ -396,18 +407,17 @@ franken-e58/
 
 | ID | Item | Resolution |
 |---|---|---|
-| O1 | Onboard LED GPIO | Identified by the M1 blink probe. GPIO 38 and 48 stay unconnected until then |
-| O2 | Which USB-C socket is the native USB port | Tested in M1 |
-| O3 | Motor stall current and flight pack | Measured in Phase 3, chosen in Phase 4 |
-| O4 | PCB module variant (N16R8 versus N8) | Decided in Phase 2 |
-| O5 | Power-protection stage: bulk capacitor, VBAT low-voltage cutoff, brownout-threshold tuning | Scheduled for a later stage. **The VBAT cutoff and brownout tuning must be in place before motors run under load (Phase 3, step 3).** The bulk capacitor is added at the PCB stage |
+| O1 | Onboard LED GPIO | The M1 probe found no LED on GPIO 38 or 48. One extended probe (47, 21), otherwise closed as not needed: GPIO 14 and 15 are spare for an external status LED. 38 and 48 stay unconnected until closed |
+| O2 | Motor stall current and flight pack | Measured in Phase 3, chosen in Phase 4 |
+| O3 | PCB module variant (N16R8 versus N8) | Decided in Phase 2 |
+| O4 | Power-protection stage: bulk capacitor, VBAT low-voltage cutoff, brownout-threshold tuning | Scheduled for a later stage. **The VBAT cutoff and brownout tuning must be in place before motors run under load (Phase 3, step 3).** The bulk capacitor is added at the PCB stage |
 
 ### 6.2 Risk Register
 
 | ID | Risk | Mitigation |
 |---|---|---|
 | R1 | Gyro vibration noise (the MPU-6050 is end-of-life and vibration-sensitive) | Soft-mount, DLPF and notch filters. If the noise proves unfixable, move to a better IMU |
-| R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O5), and a lighter-draw pack |
+| R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O4), and a lighter-draw pack |
 | R3 | Browser joystick latency | Measured in M6, with native UDP as the fallback control path |
 | R4 | Flash write stalls | No flash writes while armed (§4.2, rule 6) |
 
@@ -422,6 +432,7 @@ franken-e58/
 | WebSocket for the browser, UDP for tools | Browsers cannot send UDP |
 | Mahony attitude plus a 3-state altitude Kalman filter | Linear altitude model, so an extended filter is unnecessary. Cheaper at 1 kHz |
 | Ceramic-only regulator capacitors | Tantalum inrush failure risk on a battery-connected rail |
+| Console on UART0 plus native USB Serial/JTAG | Both sockets confirmed in M1, with identical log output on either |
 | SS34 flyback diodes and 47 Ω gate resistors | Freewheel current margin and gate-ringing control |
 
 ---

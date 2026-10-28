@@ -22,7 +22,7 @@ constexpr int kTofInt   = 13;  // optional
 constexpr int kVbatAdc = 10;
 
 // Possible onboard LED pins, reserved until identified by the M1 probe
-constexpr int kLedCandidates[2] = {38, 48};
+constexpr int kLedCandidates[4] = {48, 38, 47, 21};
 
 }  // namespace board
 

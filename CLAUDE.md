@@ -20,6 +20,9 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 - Mahony attitude filter plus a 3-state altitude Kalman filter.
 - Flight modes: Rate, then Angle, then Altitude. Angle is proven on the tether before free flight.
 - No flash writes while armed. No PSRAM in flight code or data.
+- Platform pinned to `espressif32 @ 6.13.0` (ESP-IDF 5.5.3).
+- Use split component names (`esp_driver_gpio`, `esp_driver_i2c`, `esp_driver_mcpwm`, `esp_driver_gptimer`, `esp_adc`), never the legacy `driver` catch-all.
+- Flash mode is DIO.
 
 ## Code rules
 - C++17 for firmware, Python 3 for tools. British English in comments and docs.
