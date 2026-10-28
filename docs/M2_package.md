@@ -27,12 +27,12 @@
 
 | ESP32-S3 | Device pin | Notes |
 |---|---|---|
-| 3V3 | MPU-6050 VCC, VL53L1X VIN | Sensors draw well under 30 mA |
-| GND | MPU-6050 GND, VL53L1X GND | One common ground rail |
-| GPIO 1 | MPU-6050 SDA | 4.7 kΩ to 3V3 |
-| GPIO 2 | MPU-6050 SCL | 4.7 kΩ to 3V3 |
-| GPIO 9 | MPU-6050 INT | Wire now, used in M3 |
-| MPU-6050 AD0 | GND | Forces address 0x68 |
+| 3V3 | MPU-6500 VCC, VL53L1X VIN | Sensors draw well under 30 mA |
+| GND | MPU-6500 GND, VL53L1X GND | One common ground rail |
+| GPIO 1 | MPU-6500 SDA | 4.7 kΩ to 3V3 |
+| GPIO 2 | MPU-6500 SCL | 4.7 kΩ to 3V3 |
+| GPIO 9 | MPU-6500 INT | Wire now, used in M3 |
+| MPU-6500 AD0 | GND | Forces address 0x68 |
 | GPIO 11 | VL53L1X SDA | 4.7 kΩ to 3V3 |
 | GPIO 12 | VL53L1X SCL | 4.7 kΩ to 3V3 |
 | GPIO 8 | VL53L1X XSHUT | Driven open-drain: low resets, released runs |
@@ -644,7 +644,7 @@ Show me the plan first and wait for approval, then act. Final report: (a) number
 |---|---|---|
 | 1 | Build | Clean, with no `verify_sdkconfig.sh` MISMATCH, including the two new options |
 | 2 | Scan | Bus A finds 0x68. Bus B finds 0x29. No unexpected addresses |
-| 3 | IDs | WHO_AM_I = 0x68. ToF model ID = 0xEACC (verify against the datasheet) |
+| 3 | IDs | WHO_AM_I = 0x68 or 0x70. ToF model ID = 0xEACC (verify against the datasheet) |
 | 4 | Recovery self-test | `PASS` on both buses |
 | 5 | Soak | 600 s with `err=0` on both buses and `mism=0`. Expect about 600 000 reads on A and about 30 000 on B |
 | 6 | Wire-pull | Errors appear, recovery triggers, reads resume with no reboot. Recorded for both buses |

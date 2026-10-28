@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.3. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.4. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -30,7 +30,7 @@ The architecture decouples high-current actuation from low-signal sensing, and a
 | Item | Detail |
 |---|---|
 | MCU board | ESP32-S3-**N16R8** (16 MB flash, 8 MB **octal** PSRAM), 44-pin dev board |
-| IMU | MPU-6050 on a breakout (silkscreen: VCC) |
+| IMU | MPU-6500 (WHO_AM_I 0x70, confirmed on the bench in M2) on a breakout (silkscreen: VCC) |
 | ToF | VL53L1X on a breakout (silkscreen: VIN) |
 | Motors | 4× brushed coreless. Stall current unknown (measured in Phase 3) |
 | Battery (bench) | 18650, protected high-drain cell. LiPo/LiHV flight pack chosen in Phase 4 |
@@ -43,7 +43,7 @@ The architecture decouples high-current actuation from low-signal sensing, and a
 | Breakout | Measurement | Interpretation |
 |---|---|---|
 | VL53L1X | **10 kΩ** SDA→VIN and SCL→VIN | Onboard 10 kΩ pull-ups, tied to the supply. Powered at 3.3 V, so they reference 3.3 V. |
-| MPU-6050 | **Open** SDA→VCC and SCL→VCC | Inconclusive. GY-521 pull-ups usually sit on the *regulated* side of the onboard regulator, so the VCC pin cannot see them. Optional check: power from 3.3 V, then measure DC volts SDA→GND. About 3 V means pull-ups present, about 0 V means none. |
+| IMU breakout (MPU-6500) | **Open** SDA→VCC and SCL→VCC | Inconclusive. GY-521 pull-ups usually sit on the *regulated* side of the onboard regulator, so the VCC pin cannot see them. Optional check: power from 3.3 V, then measure DC volts SDA→GND. About 3 V means pull-ups present, about 0 V means none. |
 
 **Pull-up strategy.** Fit **4.7 kΩ external pull-ups to 3V3 on all four lines** on the breadboard. This is safe in every case:
 
@@ -67,6 +67,7 @@ All combinations above sit inside 1 to 7 kΩ. Final PCB pull-up values are chose
 | CPU | Dual core, 240 MHz, chip revision v0.2 |
 | Consoles | UART0 (GPIO 43/44) and native USB Serial/JTAG both print the same log. Native socket enumerates as `303a:1001` |
 | Reset reason on power-up | Power-on, no brownout |
+| I2C buses | Both verified at 400 kHz: 10-minute soak, zero errors on both (M2) |
 
 ---
 
@@ -107,12 +108,12 @@ Each motor has an independent low-side switch:
 
 | Bus | Controller | Device | Address | Speed |
 |---|---|---|---|---|
-| **A** | I2C0 | MPU-6050 | 0x68 (AD0 low) | 400 kHz (device maximum) |
+| **A** | I2C0 | MPU-6500 | 0x68 (AD0 low) | 400 kHz (device maximum) |
 | **B** | I2C1 | VL53L1X | 0x29 (default) | 400 kHz |
 
 * The IMU has its own bus so that a ToF transaction can never delay an IMU read, which removes a source of Core 1 jitter.
 * Pull-ups per §2.2.
-* **Layout constraint:** the MPU-6050 sits at the geometric centre of the board, isolated from MOSFET and motor traces. I²C traces run over a solid ground plane to prevent inductive coupling from the motor paths.
+* **Layout constraint:** the MPU-6500 sits at the geometric centre of the board, isolated from MOSFET and motor traces. I²C traces run over a solid ground plane to prevent inductive coupling from the motor paths.
 * **Mechanical constraint:** soft-mount the IMU (foam tape, silicone grommets, or a TPU mount). Hard-mounting a MEMS gyro to a vibrating frame is the largest noise source in small brushed quads.
 * **XSHUT** is driven open-drain style: drive low to reset, release to high-impedance to run. This avoids driving 3.3 V into a part that may run its I/O at 2.8 V.
 
@@ -126,7 +127,7 @@ Each motor has an independent low-side switch:
 | Motor 4 (Rear Right) | 7 | PWM out | MCPWM |
 | IMU I2C SDA (Bus A) | 1 | Open-drain | I2C0 |
 | IMU I2C SCL (Bus A) | 2 | Open-drain | I2C0 |
-| MPU-6050 INT | 9 | Input, rising edge | Data-ready ISR, allocated on Core 1 |
+| MPU-6500 INT | 9 | Input, rising edge | Data-ready ISR, allocated on Core 1 |
 | ToF XSHUT | 8 | Open-drain | Reset and init |
 | VBAT sense | 10 | ADC1_CH9 | Divider 100k/100k |
 | ToF I2C SDA (Bus B) | 11 | Open-drain | I2C1 |
@@ -166,7 +167,7 @@ Each motor has an independent low-side switch:
  [ CORE 0: Network & Telemetry ]                [ CORE 1: Real-Time Flight Control ]
 +--------------------------------------+       +---------------------------------------+
 | Wi-Fi AP (IDF internal, pinned)      |       | flight_task  (highest priority)       |
-| HTTP + WebSocket server (LittleFS)   |       |   woken by MPU-6050 INT ISR           |
+| HTTP + WebSocket server (LittleFS)   |       |   woken by MPU-6500 INT ISR           |
 | udp_rx_task        (prio ~5)         |       |   1. I2C0 burst read (14 B)           |
 | tof_task           (prio ~6, I2C1)   |       |   2. Scaling, notch chain             |
 | battery_task       (ADC1, 100 Hz)    |       |   3. Mahony attitude (+ altitude KF)  |
@@ -190,28 +191,33 @@ Each motor has an independent low-side switch:
 6. **No flash writes (LittleFS, NVS) while armed.** Flash operations disable the cache and can stall IRAM-unsafe code. Firmware write paths refuse to run in the `ARMED` state.
 7. **Yield properly.** `flight_task` blocks on its notification each cycle, so IDLE1 runs and the task watchdog stays satisfied.
 8. **Hand-offs are lock-free.** SPSC ring for telemetry, atomic timestamped slot for setpoints, seqlock slot for ToF. No mutexes shared with Core 0.
+9. **No I2C bus recovery in the flight loop.** A stalled IMU is handled by the missing-data-ready cut trigger (§4.8). Bus recovery by tear-down and rebuild allocates memory, so it is allowed only while DISARMED, never from the flight loop. Investigate `i2c_master_bus_reset()` in M3 as an allocation-free option.
 
 ### 4.3 Timing Budget (1 kHz, 1000 µs frame)
 
 | Step | Estimate | Note |
 |---|---|---|
-| I²C burst read, 14 B at 400 kHz | about 400 µs | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 200 µs |
+| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 200 µs |
 | Filters, attitude, PID, mixer | < 150 µs | ESP32-S3 at 240 MHz with single-precision FPU. **To be measured** |
 | MCPWM update plus telemetry enqueue | < 50 µs | **To be measured** |
-| **Margin** | **≥ 400 µs** | Target loop-period jitter p99.9 < 100 µs |
+| **Margin** | **≥ 350 µs** | Target loop-period jitter p99.9 < 100 µs |
 
 ### 4.4 Signal Chain
 
-1. **MPU-6050 configuration** (registers to be verified against the datasheet and register map):
-   * `PWR_MGMT_1` (0x6B): wake, clock source = gyro X PLL.
-   * `SMPLRT_DIV` (0x19) = 0 gives a 1 kHz output rate when the DLPF is enabled.
-   * `CONFIG` (0x1A): `DLPF_CFG = 1` (about 188 Hz gyro bandwidth, about 1.9 ms delay), held as a compile-time constant. Higher delay settings such as 94/98 Hz cost about 2.8 ms, nearly three loop periods. The value is revisited with the Phase 3 data.
-   * `GYRO_CONFIG` (0x1B): ±1000 °/s, 32.8 LSB/(°/s).
+1. **MPU-6500 configuration** (registers to be verified against the datasheet and register map):
+   * `PWR_MGMT_1` (0x6B): init sequence. Write 0x80 (`DEVICE_RESET`), wait at least 100 ms, confirm `PWR_MGMT_1` reads 0x01 (`SLEEP` = 0, `CLKSEL` = 1: auto-select, PLL if ready), then configure all other registers. The IMU is not power-cycled when the ESP32 resets, so it may still hold its previous configuration. Never write 0x00 to `PWR_MGMT_1` (it selects the internal oscillator, ±10 % over temperature). Allow 35 ms after waking before trusting the gyro.
+   * `SMPLRT_DIV` (0x19) = 0 gives 1 kHz only when `FCHOICE_B` = 00 and `DLPF_CFG` = 1 to 6. It is ignored for `DLPF_CFG` 0 or 7 (8 kHz) and when the DLPF is bypassed (32 kHz).
+   * `CONFIG` (0x1A): `DLPF_CFG` as a compile-time constant (default 1: 184 Hz gyro bandwidth, 2.9 ms delay, about 3.5 ms total gyro delay including the I²C read and processing). `DLPF_CFG` = 2 is 92 Hz and 3.9 ms. The 188 Hz/1.9 ms and 98 Hz/2.8 ms figures are the temperature-sensor column of the datasheet table, not the gyro. The alternative `DLPF_CFG` = 0 is described in item 2.
+   * `GYRO_CONFIG` (0x1B) = 0x10: ±1000 °/s, 32.8 LSB/(°/s), `FCHOICE_B[1:0]` = 00. Any other `FCHOICE_B` value bypasses the DLPF and `SMPLRT_DIV`.
    * `ACCEL_CONFIG` (0x1C): ±8 g, 4096 LSB/g.
-   * `INT_PIN_CFG` (0x37), `INT_ENABLE` (0x38, bit 0 `DATA_RDY_EN`): data-ready pulse on INT.
-   * `ACCEL_XOUT_H` (0x3B): 14-byte burst (accel, temperature, gyro). `WHO_AM_I` (0x75) reads 0x68.
-2. **Interrupt-driven sampling:** the data-ready pulse on GPIO 9 wakes `flight_task`, so the loop runs on the sensor's own clock and each iteration consumes exactly one sample. This gives clean $\Delta t$ for the PID and filters.
-3. **Hardware DLPF:** the sole analogue-domain defence against motor-frequency noise above the 500 Hz Nyquist limit of a 1 kHz loop.
+   * `ACCEL_CONFIG2` (0x1D) = 0x03: accelerometer DLPF 41 Hz, 11.8 ms, 1 kHz. The reset value is 460 Hz. The MPU-6500 filters the accelerometer separately from the gyro.
+   * `INT_PIN_CFG` (0x37) = 0x10: push-pull, active high, 50 µs pulse, `INT_ANYRD_2CLEAR` = 1 so the 14-byte burst read clears the interrupt status. `INT_ENABLE` (0x38) = 0x01 (bit 0 `RAW_RDY_EN`): data-ready pulse on INT. Write `CONFIG` before enabling the interrupt, because its reset value gives 8 kHz data-ready.
+   * `ACCEL_XOUT_H` (0x3B): 14-byte burst (accel, temperature, gyro). `WHO_AM_I` (0x75) reads 0x70.
+2. **Interrupt-driven sampling:** the data-ready pulse on GPIO 9 wakes `flight_task`, so the loop runs on the sensor's own clock. The ISR timestamps each pulse and the loop's $\Delta t$ comes from that interrupt timestamp: the sensor clock is accurate to ±1 % (PLL), so $\Delta t$ is measured, not assumed. Two compile-time constants in `board_config` set the sampling: the `DLPF_CFG` value and an ISR decimation factor (1 for `DLPF_CFG` 1 to 6, 8 for `DLPF_CFG` 0).
+   * **Option B (default):** `DLPF_CFG` = 1 (184 Hz, 2.9 ms), 1 kHz data-ready, decimation 1, so each iteration consumes exactly one sample. About 3.5 ms total gyro delay.
+   * **Option A (to be evaluated):** `DLPF_CFG` = 0 (250 Hz, 0.97 ms), 8 kHz data-ready (`SMPLRT_DIV` is ignored), decimation 8, so `flight_task` acts on every 8th pulse. About 1.5 ms total gyro delay, at the cost of weaker anti-aliasing and an 8 kHz interrupt on Core 1.
+   * The datasheets do not state which sensor drives data-ready in the 8 kHz mode, so M3 measures the INT rate at `DLPF_CFG` 0 and 1 before relying on it. The final choice is made in Phase 3 step 7 from measured spectra.
+3. **On-chip digital DLPF:** applied at the 8 or 32 kHz internal rate before the output rate is set, it is the only defence against motor-frequency noise above the 500 Hz Nyquist limit of a 1 kHz loop.
 4. **Software biquad notch chain.** Notches work only below 500 Hz. With $\omega_0 = 2\pi f_0/f_s$ and $\alpha = \sin\omega_0/(2Q)$:
    $$H(z)=\frac{1-2\cos\omega_0\,z^{-1}+z^{-2}}{(1+\alpha)-2\cos\omega_0\,z^{-1}+(1-\alpha)z^{-2}}$$
    The centre frequencies come from the Phase 3 spectra. A throttle-tracking dynamic notch is a later enhancement.
@@ -332,7 +338,7 @@ franken-e58/
 ├── src/main.cpp
 ├── components/
 │   ├── hal_i2c/        hal_gpio/    hal_mcpwm/   hal_adc/
-│   ├── drv_mpu6050/    drv_vl53l1x/
+│   ├── drv_mpu6500/    drv_vl53l1x/
 │   ├── dsp_filters/    estimator/   control/     mixer/
 │   ├── safety/         comms/       telemetry/
 │   └── board_config/   (pin map, constants, limits)
@@ -353,7 +359,7 @@ franken-e58/
 |---|---|---|
 | M1 | PlatformIO skeleton, `platformio.ini`, `sdkconfig.defaults`, USB CDC logging, GPIO 4 to 7 driven low at boot, LED blink probe | Builds and flashes. Timestamped log lines over USB. `menuconfig` names verified. **Onboard LED GPIO identified. Native USB socket identified** (the one that enumerates with VID `303a`) |
 | M2 | Dual-bus I²C scan and soak, with bus-recovery routine | MPU at 0x68 and ToF at 0x29 detected. 10-minute soak at 400 kHz with zero NACKs or timeouts. Recovery tested |
-| M3 | MPU-6050 driver: config, 188 Hz DLPF, INT-driven read | `WHO_AM_I` = 0x68. INT rate 1000 ± 1 Hz. No missed samples in 10 min. Jitter measured |
+| M3 | MPU-6500 driver: config, `DLPF_CFG` as a compile-time constant (default 1: 184 Hz) plus ISR decimation factor, INT-driven read | `WHO_AM_I` = 0x70. INT rate 1000 ± 10 Hz at `DLPF_CFG` = 1 (sensor clock ±1 %). INT rate at `DLPF_CFG` = 0 measured (8000 ± 80 Hz if the gyro drives data-ready). Loop $\Delta t$ from the interrupt timestamp. No missed samples in 10 min. Jitter measured |
 | M4 | VL53L1X driver in isolation, own bus | About 50 Hz ranging. Status codes handled. Checked against a tape measure at several distances |
 | M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted |
 | M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3) |
@@ -364,7 +370,7 @@ franken-e58/
 **Objective:** a compact, light 2- or 4-layer shield board matching the E58 internal footprint.
 
 1. Schematic: AP2112K with 10 µF MLCC + 100 nF at input and output plus the bulk polymer capacitor, four AO3400A switches with 47 Ω gate resistors, 10 kΩ pull-downs, SS34 flyback diodes, 100 nF motor capacitors, two I²C buses with pull-ups sized per §2.2, VBAT divider, reverse-polarity P-FET footprint, fuse and battery connector, INA219/INA226 footprint (optional).
-2. Placement: ESP32-S3 module and MPU-6050 at the geometric centre. MOSFETs and battery terminals on the periphery. **Keep the Wi-Fi antenna free of copper and ground pours.**
+2. Placement: ESP32-S3 module and MPU-6500 at the geometric centre. MOSFETs and battery terminals on the periphery. **Keep the Wi-Fi antenna free of copper and ground pours.**
 3. Routing: motor supply traces **40 to 50 mil minimum**, I²C traces 8 to 10 mil over solid ground, **star ground** separating motor returns from logic ground.
 4. Decide the module variant for the PCB (WROOM-1 N16R8 versus an N8 variant without PSRAM, which also frees GPIO 33 to 37). Verify total mass against the flight pack.
 
@@ -376,9 +382,9 @@ franken-e58/
 2. **Stall current** per motor on the multimeter 10 A range, in series, for one to two seconds only. Optionally add an INA219 for logging.
 3. **Thrust stand** (props on, kitchen scale, frame held down): fit the thrust map $T_i(d_i)$, determine $\sigma$ and the propeller directions, and compute the real thrust-to-weight ratio. **Gate:** the VBAT cutoff and brownout-threshold tuning (§6.1) are in place before motors run under load.
 4. **Throttle sweep, 0 to 100 %,** while logging at 1 kHz over USB. Compute a Welch-averaged spectrogram (Hann window, 1024 points). Peaks that stay fixed in frequency are **frame resonances**. Peaks that move with throttle are **motor rotation harmonics**.
-5. **Wideband capture:** gyro with the DLPF disabled at 8 kHz via the MPU-6050 FIFO (1024 B, drained in bursts). This shows what is aliasing into the 1 kHz loop, since coreless-motor rotation is likely well above 500 Hz.
+5. **Wideband capture:** gyro at 8 kHz with `FCHOICE_B` = 00 and `DLPF_CFG` = 7 (3600 Hz bandwidth) via the MPU-6500 FIFO (512 B). Contiguous 3-axis capture at 8 kHz is impossible over I²C (48 kB/s needs more than a 432 kHz SCL), so capture **one axis at a time** (16 kB/s) with `FIFO_MODE` = 1, drained every 10 ms, with overflow detection and nothing else on bus A. Three runs cover X, Y and Z. The FIFO write rate in the 8 kHz mode is not stated in the datasheets, so verify it first by watching `FIFO_COUNT`. Contiguous 3-axis capture would need SPI. This shows what is aliasing into the 1 kHz loop, since coreless-motor rotation is likely well above 500 Hz.
 6. Set biquad notch centres and Q in the config. Re-measure. Trial the **soft-mount** and propeller balancing, and compare spectra.
-7. Revisit the DLPF setting (188 Hz versus lower) with the data.
+7. Revisit the DLPF setting with the data: Option B (`DLPF_CFG` = 1, 184 Hz) versus Option A (`DLPF_CFG` = 0, 250 Hz, decimation 8) from §4.4 item 2, or a lower bandwidth. The final `DLPF_CFG` choice is made here from the measured spectra.
 
 ### Phase 4: Mechanical Mount Engineering & Tethered Tuning
 
@@ -416,7 +422,7 @@ franken-e58/
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| R1 | Gyro vibration noise (the MPU-6050 is end-of-life and vibration-sensitive) | Soft-mount, DLPF and notch filters. If the noise proves unfixable, move to a better IMU |
+| R1 | Gyro vibration noise (MPU-6500: gyro noise 0.01 °/s/√Hz, mechanical drive 25 to 29 kHz; vibration sensitivity and lifecycle status are not stated in the datasheets) | Soft-mount, DLPF, accelerometer DLPF (§4.4) and notch filters. If the noise proves unfixable, move to a better IMU |
 | R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O4), and a lighter-draw pack |
 | R3 | Browser joystick latency | Measured in M6, with native UDP as the fallback control path |
 | R4 | Flash write stalls | No flash writes while armed (§4.2, rule 6) |

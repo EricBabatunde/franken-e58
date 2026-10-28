@@ -14,8 +14,8 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 - Never run `pio run -t upload` or `pio device monitor`. The user flashes and monitors manually.
 
 ## Key decisions (do not change without a blueprint diff)
-- ToF is a VL53L1X. MPU-6050 on I2C0, VL53L1X on I2C1.
-- 1 kHz loop, INT-driven IMU sampling, DLPF 188 Hz as a compile-time constant.
+- ToF is a VL53L1X. MPU-6500 on I2C0, VL53L1X on I2C1.
+- 1 kHz loop, INT-driven IMU sampling, DLPF_CFG as a compile-time constant (default 1: 184 Hz).
 - WebSocket for the browser joystick, raw UDP for Python tools and telemetry.
 - Mahony attitude filter plus a 3-state altitude Kalman filter.
 - Flight modes: Rate, then Angle, then Altitude. Angle is proven on the tether before free flight.
