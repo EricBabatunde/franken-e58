@@ -185,8 +185,8 @@
                 "/home/eric/.platformio/packages/framework-espidf/components/wifi_provisioning/include",
                 "/home/eric/Documents/projects/franken-e58/components/board_config/include",
                 "/home/eric/Documents/projects/franken-e58/components/hal_gpio/include",
-                "/home/eric/Documents/projects/franken-e58/src",
                 "/home/eric/Documents/projects/franken-e58/components/hal_i2c/include",
+                "/home/eric/Documents/projects/franken-e58/src",
                 ""
             ],
             "browse": {
@@ -369,8 +369,8 @@
                     "/home/eric/.platformio/packages/framework-espidf/components/wifi_provisioning/include",
                     "/home/eric/Documents/projects/franken-e58/components/board_config/include",
                     "/home/eric/Documents/projects/franken-e58/components/hal_gpio/include",
-                    "/home/eric/Documents/projects/franken-e58/src",
                     "/home/eric/Documents/projects/franken-e58/components/hal_i2c/include",
+                    "/home/eric/Documents/projects/franken-e58/src",
                     ""
                 ]
             },
@@ -383,7 +383,7 @@
                 "SOC_MMU_PAGE_SIZE=CONFIG_MMU_PAGE_SIZE",
                 "IDF_VER=\"5.5.3\"",
                 "ESP_PLATFORM",
-                "PLATFORMIO=60119",
+                "PLATFORMIO=60200",
                 "ARDUINO_ESP32S3_DEV",
                 "ARDUINO_USB_MODE=1",
                 "ARDUINO_RUNNING_CORE=1",

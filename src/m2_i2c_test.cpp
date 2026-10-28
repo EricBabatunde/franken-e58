@@ -20,6 +20,7 @@ using hal_i2c::Bus;
 constexpr uint8_t kMpuRegWhoAmI = 0x75;      // expect 0x68
 constexpr uint8_t kMpuRegAccelXoutH = 0x3B;  // start of the 14-byte burst
 constexpr uint8_t kMpuWhoAmI = 0x68;
+constexpr uint8_t kMpu6500WhoAmI = 0x70;  // RM-MPU-6500A-00 p.44
 
 // VL53L1X identification (verify against the datasheet and ST ULD API)
 constexpr uint16_t kTofRegModelId = 0x010F;  // expect 0xEA then 0xCC
@@ -290,8 +291,13 @@ void m2_start() {
         return;
     }
 
-    ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X (%s)", a.id[0],
-             (a.id_err == ESP_OK && a.id[0] == kMpuWhoAmI) ? "OK" : "UNEXPECTED");
+    const char* mpu_kind = "UNEXPECTED";
+    if (a.id_err == ESP_OK && a.id[0] == kMpuWhoAmI) {
+        mpu_kind = "OK: MPU-6050";
+    } else if (a.id_err == ESP_OK && a.id[0] == kMpu6500WhoAmI) {
+        mpu_kind = "OK: MPU-6500 (WHO_AM_I 0x70)";
+    }
+    ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X (%s)", a.id[0], mpu_kind);
     ESP_LOGI(TAG, "ToF model ID = 0x%02X%02X (%s)", b.id[0], b.id[1],
              (b.id_err == ESP_OK && b.id[0] == kTofModelId0 && b.id[1] == kTofModelId1) ? "OK" : "UNEXPECTED");
 
