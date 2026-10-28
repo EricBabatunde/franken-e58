@@ -186,6 +186,7 @@
                 "/home/eric/Documents/projects/franken-e58/components/board_config/include",
                 "/home/eric/Documents/projects/franken-e58/components/hal_gpio/include",
                 "/home/eric/Documents/projects/franken-e58/src",
+                "/home/eric/Documents/projects/franken-e58/components/hal_i2c/include",
                 ""
             ],
             "browse": {
@@ -369,6 +370,7 @@
                     "/home/eric/Documents/projects/franken-e58/components/board_config/include",
                     "/home/eric/Documents/projects/franken-e58/components/hal_gpio/include",
                     "/home/eric/Documents/projects/franken-e58/src",
+                    "/home/eric/Documents/projects/franken-e58/components/hal_i2c/include",
                     ""
                 ]
             },

@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "hal_gpio.h"
 #include "led_probe.h"
+#include "m2_i2c_test.h"
 
 static const char* TAG = "main";
 
@@ -48,6 +49,10 @@ extern "C" void app_main(void) {
     // 3. One-off LED probe (bring-up only).
 #if FE_LED_PROBE
     led_probe_run();
+#endif
+
+#if FE_M2_TEST
+    m2_start();
 #endif
 
     // 4. Heartbeat: 1 Hz, microsecond timestamp from the 64-bit esp_timer.

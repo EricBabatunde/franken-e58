@@ -30,6 +30,7 @@ constexpr int kSoakSeconds = 600;
 constexpr int kReportEverySeconds = 10;
 constexpr int kTimeoutMs = 10;
 constexpr uint32_t kRecoverAfter = 5;  // consecutive failures before a recovery
+constexpr uint32_t kBusAStackBytes = 4096;  // checked via the high-water mark log line
 
 struct Stats {
     std::atomic<uint32_t> ok{0};
@@ -38,7 +39,9 @@ struct Stats {
     std::atomic<uint32_t> mismatch{0};
     std::atomic<uint32_t> dur_min{UINT32_MAX};
     std::atomic<uint32_t> dur_max{0};
-    std::atomic<uint64_t> dur_sum{0};
+    // 32-bit so it stays lock-free (64-bit atomics take a spinlock shared by both
+    // cores). 600 s x 1 kHz x ~1000 us fits; wraps after ~2.4 h of post-soak running.
+    std::atomic<uint32_t> dur_sum{0};
     std::atomic<uint32_t> per_min{UINT32_MAX};
     std::atomic<uint32_t> per_max{0};
 };
@@ -47,6 +50,28 @@ Stats g_a;
 Stats g_b;
 hal_i2c::Device g_mpu{};
 hal_i2c::Device g_tof{};
+
+// Bring-up results for one bus, filled without logging by the task that owns the bus
+// and printed afterwards by Core 0 in a fixed order.
+struct BringUp {
+    esp_err_t init = ESP_FAIL;
+    uint32_t found[4] = {};  // bitmap of 7-bit addresses that ACKed the scan
+    bool present = false;    // the expected sensor ACKed its address
+    esp_err_t id_err = ESP_FAIL;
+    uint8_t id[2] = {};
+    esp_err_t rec = ESP_FAIL;
+    esp_err_t rec_probe = ESP_FAIL;
+};
+
+BringUp g_up_a;                  // written by the Core 1 task before it publishes
+BringUp g_up_b;                  // Core 0 only
+uint32_t g_a_stack_free = 0;     // bytes, written by the Core 1 task before it publishes
+
+// Lock-free handshake. Core 1 publishes bus A results once; Core 0 answers go or stop.
+enum : int { kWorking = 0, kPublished = 1, kMpuMissing = 2 };
+enum : int { kPending = 0, kGo = 1, kStop = 2 };
+std::atomic<int> g_a_state{kWorking};
+std::atomic<int> g_go{kPending};
 
 constexpr auto kRelaxed = std::memory_order_relaxed;
 
@@ -69,10 +94,19 @@ unsigned avg_us(const Stats& s) {
     return n ? static_cast<unsigned>(s.dur_sum.load(kRelaxed) / n) : 0u;
 }
 
-void scan(Bus bus, const char* name) {
-    int found = 0;
+// Runs on either core: no logging.
+void scan(Bus bus, BringUp& r) {
     for (int a = 0x08; a <= 0x77; ++a) {
         if (hal_i2c::probe(bus, static_cast<uint8_t>(a), 20) == ESP_OK) {
+            r.found[a / 32] |= 1u << (a % 32);
+        }
+    }
+}
+
+void print_scan(const char* name, const BringUp& r) {
+    int found = 0;
+    for (int a = 0x08; a <= 0x77; ++a) {
+        if (r.found[a / 32] & (1u << (a % 32))) {
             ESP_LOGI(TAG, "scan %s: device at 0x%02X", name, a);
             ++found;
         }
@@ -80,16 +114,20 @@ void scan(Bus bus, const char* name) {
     ESP_LOGI(TAG, "scan %s done: %d device(s)", name, found);
 }
 
-bool selftest_bus(Bus bus, const char* name, uint8_t addr) {
-    const esp_err_t r = hal_i2c::recover(bus);
-    const esp_err_t p = hal_i2c::probe(bus, addr, 20);
+// Runs on either core: no logging.
+void selftest_bus(Bus bus, uint8_t addr, BringUp& r) {
+    r.rec = hal_i2c::recover(bus);
+    r.rec_probe = hal_i2c::probe(bus, addr, 20);
+}
+
+bool print_selftest(const char* name, const BringUp& r) {
     ESP_LOGI(TAG, "recovery self-test bus %s: recover=%s probe=%s", name,
-             esp_err_to_name(r), esp_err_to_name(p));
-    return r == ESP_OK && p == ESP_OK;
+             esp_err_to_name(r.rec), esp_err_to_name(r.rec_probe));
+    return r.rec == ESP_OK && r.rec_probe == ESP_OK;
 }
 
 // Bus A: 14-byte burst at 1 kHz, the same transfer the flight loop will use.
-void soak_a_task(void*) {
+[[noreturn]] void soak_a() {
     uint8_t buf[14];
     uint32_t consecutive = 0;
     int64_t prev = 0;
@@ -115,6 +153,38 @@ void soak_a_task(void*) {
         }
         vTaskDelayUntil(&wake, 1);  // 1 tick = 1 ms at CONFIG_FREERTOS_HZ=1000
     }
+}
+
+// Core 1: owns bus A for its whole life, so the bus A interrupt is allocated on Core 1.
+// Never logs (CLAUDE.md Core 1 rules): results go to g_up_a and Core 0 prints them.
+void bus_a_task(void*) {
+    BringUp& r = g_up_a;
+    r.init = hal_i2c::init(Bus::A, board::kImuSda, board::kImuScl, board::kI2cHz);
+    scan(Bus::A, r);
+    r.present = hal_i2c::probe(Bus::A, board::kMpuAddr, 20) == ESP_OK;
+    if (r.present) {
+        hal_i2c::add_device(Bus::A, board::kMpuAddr, &g_mpu);
+        r.id_err = hal_i2c::read_reg8(g_mpu, kMpuRegWhoAmI, r.id, 1, kTimeoutMs);
+        selftest_bus(Bus::A, board::kMpuAddr, r);
+    }
+    g_a_stack_free = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(nullptr));
+
+    if (!r.present) {
+        g_a_state.store(kMpuMissing, std::memory_order_release);
+        vTaskDelete(nullptr);
+        return;
+    }
+    g_a_state.store(kPublished, std::memory_order_release);
+
+    int go;
+    while ((go = g_go.load(std::memory_order_acquire)) == kPending) {
+        vTaskDelay(1);
+    }
+    if (go != kGo) {
+        vTaskDelete(nullptr);
+        return;
+    }
+    soak_a();
 }
 
 // Bus B: 2-byte ID read at 50 Hz, the rate the ToF will run at.
@@ -169,25 +239,42 @@ void report_task(void*) {
 }  // namespace
 
 void m2_start() {
-    // 1. Buses.
-    esp_err_t e = hal_i2c::init(Bus::A, board::kImuSda, board::kImuScl, board::kI2cHz);
-    ESP_LOGI(TAG, "init bus A (I2C0, SDA=%d SCL=%d): %s", board::kImuSda, board::kImuScl, esp_err_to_name(e));
-    e = hal_i2c::init(Bus::B, board::kTofSda, board::kTofScl, board::kI2cHz);
-    ESP_LOGI(TAG, "init bus B (I2C1, SDA=%d SCL=%d): %s", board::kTofSda, board::kTofScl, esp_err_to_name(e));
-
-    // 2. ToF out of reset: low for 10 ms, release, wait for boot.
+    // 1. ToF out of reset first: low for 10 ms, release, wait for boot.
     hal_gpio::tof_xshut_init();
     vTaskDelay(pdMS_TO_TICKS(10));
     hal_gpio::tof_xshut_set(true);
     vTaskDelay(pdMS_TO_TICKS(20));
 
-    // 3. Scan.
-    scan(Bus::A, "A");
-    scan(Bus::B, "B");
+    // 2. Bring-up: bus A on Core 1 and bus B here on Core 0, in parallel, without logging.
+    xTaskCreatePinnedToCore(bus_a_task, "bus_a", kBusAStackBytes, nullptr,
+                            configMAX_PRIORITIES - 2, nullptr, 1);
 
-    // 4. Devices and IDs.
-    const bool mpu_present = hal_i2c::probe(Bus::A, board::kMpuAddr, 20) == ESP_OK;
-    const bool tof_present = hal_i2c::probe(Bus::B, board::kTofAddr, 20) == ESP_OK;
+    BringUp& b = g_up_b;
+    b.init = hal_i2c::init(Bus::B, board::kTofSda, board::kTofScl, board::kI2cHz);
+    scan(Bus::B, b);
+    b.present = hal_i2c::probe(Bus::B, board::kTofAddr, 20) == ESP_OK;
+    if (b.present) {
+        hal_i2c::add_device(Bus::B, board::kTofAddr, &g_tof);
+        b.id_err = hal_i2c::read_reg16(g_tof, kTofRegModelId, b.id, sizeof(b.id), kTimeoutMs);
+        selftest_bus(Bus::B, board::kTofAddr, b);
+    }
+
+    int a_state;
+    while ((a_state = g_a_state.load(std::memory_order_acquire)) == kWorking) {
+        vTaskDelay(1);
+    }
+    const BringUp& a = g_up_a;
+
+    // 3. Report in the fixed order: inits, scans, presence, IDs, self-test.
+    ESP_LOGI(TAG, "init bus A (I2C0, SDA=%d SCL=%d): %s", board::kImuSda, board::kImuScl, esp_err_to_name(a.init));
+    ESP_LOGI(TAG, "init bus B (I2C1, SDA=%d SCL=%d): %s", board::kTofSda, board::kTofScl, esp_err_to_name(b.init));
+    print_scan("A", a);
+    print_scan("B", b);
+    ESP_LOGI(TAG, "bus A task stack high-water mark after init: %u of %u bytes free",
+             u(g_a_stack_free), u(kBusAStackBytes));
+
+    const bool mpu_present = a_state == kPublished;
+    const bool tof_present = b.present;
     if (!mpu_present) {
         ESP_LOGE(TAG, "MPU-6050 not found at 0x%02X. Check 3V3, GND, SDA/SCL on GPIO %d/%d, AD0 to GND, pull-ups.",
                  board::kMpuAddr, board::kImuSda, board::kImuScl);
@@ -199,29 +286,23 @@ void m2_start() {
     }
     if (!mpu_present || !tof_present) {
         ESP_LOGE(TAG, "M2 stopped: fix wiring and reset. Soak not started.");
+        g_go.store(kStop, std::memory_order_release);  // the bus A task ends itself
         return;
     }
-    hal_i2c::add_device(Bus::A, board::kMpuAddr, &g_mpu);
-    hal_i2c::add_device(Bus::B, board::kTofAddr, &g_tof);
 
-    uint8_t who = 0;
-    e = hal_i2c::read_reg8(g_mpu, kMpuRegWhoAmI, &who, 1, kTimeoutMs);
-    ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X (%s)", who,
-             (e == ESP_OK && who == kMpuWhoAmI) ? "OK" : "UNEXPECTED");
+    ESP_LOGI(TAG, "MPU WHO_AM_I = 0x%02X (%s)", a.id[0],
+             (a.id_err == ESP_OK && a.id[0] == kMpuWhoAmI) ? "OK" : "UNEXPECTED");
+    ESP_LOGI(TAG, "ToF model ID = 0x%02X%02X (%s)", b.id[0], b.id[1],
+             (b.id_err == ESP_OK && b.id[0] == kTofModelId0 && b.id[1] == kTofModelId1) ? "OK" : "UNEXPECTED");
 
-    uint8_t id[2] = {};
-    e = hal_i2c::read_reg16(g_tof, kTofRegModelId, id, sizeof(id), kTimeoutMs);
-    ESP_LOGI(TAG, "ToF model ID = 0x%02X%02X (%s)", id[0], id[1],
-             (e == ESP_OK && id[0] == kTofModelId0 && id[1] == kTofModelId1) ? "OK" : "UNEXPECTED");
+    // Both buses ran their self-test, so both lines always print.
+    const bool rec_a = print_selftest("A", a);
+    const bool rec_b = print_selftest("B", b);
+    ESP_LOGI(TAG, "recovery self-test: %s", (rec_a && rec_b) ? "PASS" : "FAIL");
 
-    // 5. Recovery self-test.
-    const bool rec_ok = selftest_bus(Bus::A, "A", board::kMpuAddr) &&
-                        selftest_bus(Bus::B, "B", board::kTofAddr);
-    ESP_LOGI(TAG, "recovery self-test: %s", rec_ok ? "PASS" : "FAIL");
-
-    // 6. Soak.
+    // 4. Soak: both soaks start together.
     ESP_LOGI(TAG, "starting %d s soak at %u Hz", kSoakSeconds, u(board::kI2cHz));
-    xTaskCreatePinnedToCore(soak_a_task, "soak_a", 4096, nullptr, configMAX_PRIORITIES - 2, nullptr, 1);
+    g_go.store(kGo, std::memory_order_release);
     xTaskCreatePinnedToCore(soak_b_task, "soak_b", 4096, nullptr, 6, nullptr, 0);
     xTaskCreatePinnedToCore(report_task, "m2_report", 4096, nullptr, 3, nullptr, 0);
 }

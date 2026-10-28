@@ -2,13 +2,11 @@
 
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
-#include "esp_log.h"
 #include "esp_rom_sys.h"
 
 namespace hal_i2c {
 namespace {
 
-const char* TAG = "hal_i2c";
 constexpr int kMaxDevicesPerBus = 2;
 
 struct BusState {
@@ -25,6 +23,14 @@ struct BusState {
 BusState g_bus[2];
 
 BusState& state(Bus b) { return g_bus[static_cast<int>(b)]; }
+
+// Null when the Device is out of range or its handle is missing (e.g. a failed rebuild).
+i2c_master_dev_handle_t dev_handle(Device d) {
+    if (d.bus >= 2 || d.slot >= kMaxDevicesPerBus) {
+        return nullptr;
+    }
+    return g_bus[d.bus].dev[d.slot];
+}
 
 esp_err_t create_bus(BusState& b, int port) {
     i2c_master_bus_config_t cfg = {};
@@ -72,7 +78,10 @@ void bitbang_clear(int sda, int scl) {
         esp_rom_delay_us(5);
     }
 
-    // STOP condition: SDA low to high while SCL is high.
+    // STOP condition: SDA low to high while SCL is high. SCL goes low first so that
+    // pulling SDA low is not seen as a START.
+    gpio_set_level(scl_pin, 0);
+    esp_rom_delay_us(5);
     gpio_set_level(sda_pin, 0);
     esp_rom_delay_us(5);
     gpio_set_level(scl_pin, 1);
@@ -115,27 +124,36 @@ esp_err_t add_device(Bus bus, uint8_t addr7, Device* out) {
 
 esp_err_t probe(Bus bus, uint8_t addr7, int timeout_ms) {
     BusState& b = state(bus);
-    if (!b.inited) {
+    if (!b.inited || b.handle == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
     return i2c_master_probe(b.handle, addr7, timeout_ms);
 }
 
 esp_err_t read_reg8(Device d, uint8_t reg, uint8_t* buf, size_t len, int timeout_ms) {
-    BusState& b = g_bus[d.bus];
-    return i2c_master_transmit_receive(b.dev[d.slot], &reg, 1, buf, len, timeout_ms);
+    const i2c_master_dev_handle_t h = dev_handle(d);
+    if (h == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return i2c_master_transmit_receive(h, &reg, 1, buf, len, timeout_ms);
 }
 
 esp_err_t read_reg16(Device d, uint16_t reg, uint8_t* buf, size_t len, int timeout_ms) {
-    BusState& b = g_bus[d.bus];
+    const i2c_master_dev_handle_t h = dev_handle(d);
+    if (h == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
     const uint8_t a[2] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg & 0xFF)};
-    return i2c_master_transmit_receive(b.dev[d.slot], a, sizeof(a), buf, len, timeout_ms);
+    return i2c_master_transmit_receive(h, a, sizeof(a), buf, len, timeout_ms);
 }
 
 esp_err_t write_reg8(Device d, uint8_t reg, uint8_t value, int timeout_ms) {
-    BusState& b = g_bus[d.bus];
+    const i2c_master_dev_handle_t h = dev_handle(d);
+    if (h == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
     const uint8_t tx[2] = {reg, value};
-    return i2c_master_transmit(b.dev[d.slot], tx, sizeof(tx), timeout_ms);
+    return i2c_master_transmit(h, tx, sizeof(tx), timeout_ms);
 }
 
 esp_err_t recover(Bus bus) {
@@ -143,7 +161,7 @@ esp_err_t recover(Bus bus) {
     if (!b.inited) {
         return ESP_ERR_INVALID_STATE;
     }
-    ESP_LOGW(TAG, "recovering bus %d (SDA=%d SCL=%d)", static_cast<int>(bus), b.sda, b.scl);
+    // No logging here: the M2 soak calls this from Core 1. Callers report recoveries.
 
     for (uint8_t i = 0; i < b.n_dev; ++i) {
         if (b.dev[i] != nullptr) {
@@ -158,9 +176,10 @@ esp_err_t recover(Bus bus) {
 
     bitbang_clear(b.sda, b.scl);
 
+    // On failure the bus stays inited with null handles: transfers return
+    // ESP_ERR_INVALID_STATE and the next recover() retries the rebuild.
     esp_err_t err = create_bus(b, static_cast<int>(bus));
     if (err != ESP_OK) {
-        b.inited = false;
         return err;
     }
     for (uint8_t i = 0; i < b.n_dev; ++i) {

@@ -24,3 +24,7 @@ CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 # Safety layers
 CONFIG_ESP_BROWNOUT_DET=y
 CONFIG_ESP_TASK_WDT_EN=y
+
+# IRAM-safe peripheral control (the flight loop must survive cache stalls)
+CONFIG_I2C_ISR_IRAM_SAFE=y
+CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y

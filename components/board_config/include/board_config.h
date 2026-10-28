@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // Single source of truth for pin numbers and project-wide limits.
 // No other file may contain a literal GPIO number.
 
@@ -24,7 +25,15 @@ constexpr int kVbatAdc = 10;
 // Possible onboard LED pins, reserved until identified by the M1 probe
 constexpr int kLedCandidates[4] = {48, 38, 47, 21};
 
+// I2C (both buses)
+constexpr uint32_t kI2cHz = 400000;  // Fast-mode, the MPU-6050 maximum
+constexpr uint8_t kMpuAddr = 0x68;   // AD0 low
+constexpr uint8_t kTofAddr = 0x29;   // VL53L1X default
+
 }  // namespace board
 
 // Set to 0 once the LED GPIO is identified.
-#define FE_LED_PROBE 1
+#define FE_LED_PROBE 0
+
+// Set to 0 to skip the Module 2 bench test.
+#define FE_M2_TEST 1

@@ -27,6 +27,15 @@ esp_err_t write_reg8(Device d, uint8_t reg, uint8_t value, int timeout_ms);
 
 // Bus recovery: removes devices and the bus, clocks SCL up to 9 times until SDA
 // releases, issues a STOP, then rebuilds the bus and re-adds the same devices.
+//
+// Never call while the vehicle is armed (diff D-M2-01). Rebuilding the bus allocates
+// from the heap inside the IDF driver. In flight, an IMU bus error is handled by the
+// cut trigger; recovery is only for the disarmed state, from outside the flight loop.
+// (The driver itself already resets the controller and clears the bus after a timeout.)
+// The M2 soak calls this from its Core 1 loop as a bench-test exception only.
+//
+// Transfers and probe() return ESP_ERR_INVALID_STATE while a handle is missing,
+// e.g. after a failed rebuild. Calling recover() again retries the rebuild.
 esp_err_t recover(Bus bus);
 
 }  // namespace hal_i2c

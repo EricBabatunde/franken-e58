@@ -3,7 +3,7 @@
 Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is ground-up ESP-IDF 5.x (PlatformIO, official `espressif32` platform, `framework = espidf`, no Arduino). The binding spec is `docs/Franken-E58_Full_System_Architecture_Blueprint.md`. Read the sections relevant to the current module before starting. Do not load the whole file unless it is needed.
 
 ## Status
-- Phase 1 (breadboard, props off, no motors). Current module: M1, see `docs/M1_package.md`.
+- Phase 1 (breadboard, props off, no motors). Current module: M2, see `docs/M2_package.md`.
 - Work on ONE module at a time. Never add features from later modules.
 
 ## Commands
@@ -23,12 +23,13 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 - Platform pinned to `espressif32 @ 6.13.0` (ESP-IDF 5.5.3).
 - Use split component names (`esp_driver_gpio`, `esp_driver_i2c`, `esp_driver_mcpwm`, `esp_driver_gptimer`, `esp_adc`), never the legacy `driver` catch-all.
 - Flash mode is DIO.
+- I2C bus recovery by tear-down and rebuild is a bench-test exception and must never run while armed. Flight code relies on the IMU-stall cut trigger. Investigate i2c_master_bus_reset() in M3.
 
 ## Code rules
 - C++17 for firmware, Python 3 for tools. British English in comments and docs.
 - All drivers use ESP-IDF 5.x APIs directly, behind HAL components (`hal_i2c`, `hal_mcpwm`, ...). Drivers never call IDF peripheral APIs directly.
 - Pin numbers and limits live ONLY in `components/board_config`.
-- Static allocation only after initialisation. No heap allocation, printf or ESP_LOG on Core 1.
+- Static allocation only after initialisation. No heap allocation after initialisation, and no printf or ESP_LOG, on Core 1.
 - ISRs and control paths are IRAM_ATTR and do the minimum (notify, timestamp).
 - Lock-free hand-offs between cores (SPSC ring, atomic slot, seqlock). Never share a mutex with Core 0.
 - Every module ships a bench test and a timing measurement hook.
