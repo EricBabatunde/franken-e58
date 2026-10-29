@@ -156,6 +156,27 @@ esp_err_t write_reg8(Device d, uint8_t reg, uint8_t value, int timeout_ms) {
     return i2c_master_transmit(h, tx, sizeof(tx), timeout_ms);
 }
 
+esp_err_t write_reg16(Device d, uint16_t reg, uint8_t value, int timeout_ms) {
+    return write_reg16_block(d, reg, &value, 1, timeout_ms);
+}
+
+esp_err_t write_reg16_block(Device d, uint16_t reg, const uint8_t* data, size_t len, int timeout_ms) {
+    const i2c_master_dev_handle_t h = dev_handle(d);
+    if (h == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (data == nullptr || len == 0 || len > kMaxReg16BlockLen) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t tx[2 + kMaxReg16BlockLen];
+    tx[0] = static_cast<uint8_t>(reg >> 8);
+    tx[1] = static_cast<uint8_t>(reg & 0xFF);
+    for (size_t i = 0; i < len; ++i) {
+        tx[2 + i] = data[i];
+    }
+    return i2c_master_transmit(h, tx, 2 + len, timeout_ms);
+}
+
 esp_err_t recover(Bus bus) {
     BusState& b = state(bus);
     if (!b.inited) {

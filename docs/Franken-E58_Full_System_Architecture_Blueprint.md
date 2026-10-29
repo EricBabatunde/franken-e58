@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.5. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.6. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -68,6 +68,8 @@ All combinations above sit inside 1 to 7 kΩ. Final PCB pull-up values are chose
 | Consoles | UART0 (GPIO 43/44) and native USB Serial/JTAG both print the same log. Native socket enumerates as `303a:1001` |
 | Reset reason on power-up | Power-on, no brownout |
 | I2C buses | Both verified at 400 kHz: 10-minute soak, zero errors on both (M2) |
+| IMU timing | 1 kHz interrupt-driven: 999.74 Hz, interval standard deviation 0.44 µs, ISR-to-task wake 6 to 13 µs, 14-byte burst 450 µs, 10 minutes with zero missed samples (M3) |
+| 8 kHz mode | DLPF_CFG 0 gives 7997.9 Hz data-ready with no reads; under read traffic one raw pulse was occasionally lost (raw interval up to 251 µs, read interval up to 1126 µs) (M3) |
 
 ---
 
@@ -200,6 +202,7 @@ Each motor has an independent low-side switch:
 | I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it) |
 | Filters, attitude, PID, mixer | < 150 µs | ESP32-S3 at 240 MHz with single-precision FPU. **To be measured** |
 | MCPWM update plus telemetry enqueue | < 50 µs | **To be measured** |
+| ISR-to-task wake-up | 7 µs average, 13 µs maximum measured | M3, Wi-Fi off. M7 repeats it with Wi-Fi on |
 | **Margin** | **≥ 350 µs** | Target loop-period jitter p99.9 < 100 µs |
 
 ### 4.4 Signal Chain
@@ -216,7 +219,7 @@ Each motor has an independent low-side switch:
 2. **Interrupt-driven sampling:** the data-ready pulse on GPIO 9 wakes `flight_task`, so the loop runs on the sensor's own clock. The ISR timestamps each pulse and the loop's $\Delta t$ comes from that interrupt timestamp: the sensor clock is accurate to ±1 % (PLL), so $\Delta t$ is measured, not assumed. Two compile-time constants in `board_config` set the sampling: the `DLPF_CFG` value and an ISR decimation factor (1 for `DLPF_CFG` 1 to 6, 8 for `DLPF_CFG` 0).
    * **Option B (default):** `DLPF_CFG` = 1 (184 Hz, 2.9 ms), 1 kHz data-ready, decimation 1, so each iteration consumes exactly one sample. About 3.5 ms total gyro delay.
    * **Option A (to be evaluated):** `DLPF_CFG` = 0 (250 Hz, 0.97 ms), 8 kHz data-ready (`SMPLRT_DIV` is ignored), decimation 8, so `flight_task` acts on every 8th pulse. About 1.5 ms total gyro delay, at the cost of weaker anti-aliasing and an 8 kHz interrupt on Core 1.
-   * The datasheets do not state which sensor drives data-ready in the 8 kHz mode, so M3 measures the INT rate at `DLPF_CFG` 0 and 1 before relying on it. The final choice is made in Phase 3 step 7 from measured spectra.
+   * Measured in M3: `DLPF_CFG` = 1 gives 999.74 Hz data-ready with interval standard deviation 0.44 µs and zero missed samples over 10 minutes; `DLPF_CFG` = 0 gives 7997.9 Hz with no reads, but under read traffic one raw pulse was occasionally lost (raw interval up to 251 µs, read interval up to 1126 µs). Option B is confirmed as the default. Option A stays a Phase 3 step 7 experiment because of the lost-pulse behaviour. The final choice is made in Phase 3 step 7 from measured spectra.
 3. **On-chip digital DLPF:** applied at the 8 or 32 kHz internal rate before the output rate is set, it is the only defence against motor-frequency noise above the 500 Hz Nyquist limit of a 1 kHz loop.
 4. **Software biquad notch chain.** Notches work only below 500 Hz. With $\omega_0 = 2\pi f_0/f_s$ and $\alpha = \sin\omega_0/(2Q)$:
    $$H(z)=\frac{1-2\cos\omega_0\,z^{-1}+z^{-2}}{(1+\alpha)-2\cos\omega_0\,z^{-1}+(1-\alpha)z^{-2}}$$
@@ -229,7 +232,7 @@ Each motor has an independent low-side switch:
    Update with the tilt-compensated ToF range $r$:
    $$y = r\cos\phi\cos\theta,\quad H=[1\;0\;0],\quad K=PH^\top(HPH^\top+R)^{-1},\quad x\leftarrow x+K(y-Hx),\quad P\leftarrow(I-KH)P$$
    The dynamics and measurement model are linear in the states (the tilt compensation is applied to the measurement outside the filter), so no linearisation is needed and an *extended* Kalman filter would add cost without benefit. An EKF is reserved for any future measurement with a nonlinear model (for example optical flow). Innovations beyond a gate are rejected, with an exception for persistent consistent readings (a terrain step, §5 Phase 5). The sensor latency (about one timing budget) is compensated.
-7. **ToF configuration (VL53L1X):** short distance mode (≤ about 1.3 m, best ambient immunity) at about 50 Hz (20 ms timing budget). Read in `tof_task` on I2C1. Use ST's ULD API or a vetted open-source port after a **licence check**.
+7. **ToF configuration (VL53L1X):** short distance mode (≤ about 1.3 m, best ambient immunity) at about 40 Hz (20 ms timing budget, 25 ms inter-measurement period). Read in `tof_task` on I2C1. Driver ported from the Pololu vl53l1x-arduino library (BSD-3-Clause, see docs/THIRD_PARTY_LICENSES.md).
 
 ### 4.5 Control Laws
 
@@ -360,7 +363,7 @@ franken-e58/
 | M1 | PlatformIO skeleton, `platformio.ini`, `sdkconfig.defaults`, USB CDC logging, GPIO 4 to 7 driven low at boot, LED blink probe | Builds and flashes. Timestamped log lines over USB. `menuconfig` names verified. **Onboard LED GPIO identified. Native USB socket identified** (the one that enumerates with VID `303a`) |
 | M2 | Dual-bus I²C scan and soak, with bus-recovery routine | MPU at 0x68 and ToF at 0x29 detected. 10-minute soak at 400 kHz with zero NACKs or timeouts. Recovery tested |
 | M3 | MPU-6500 driver: config, `DLPF_CFG` as a compile-time constant (default 1: 184 Hz) plus ISR decimation factor, INT-driven read | `WHO_AM_I` = 0x70. INT rate 1000 ± 10 Hz at `DLPF_CFG` = 1 (sensor clock ±1 %). INT rate at `DLPF_CFG` = 0 measured (8000 ± 80 Hz expected if the gyro drives data-ready; the measurement decides, not a pass threshold). Loop $\Delta t$ from the interrupt timestamp. No missed samples in 10 min. Jitter measured |
-| M4 | VL53L1X driver in isolation, own bus | About 50 Hz ranging. Status codes handled. Checked against a tape measure at several distances |
+| M4 | VL53L1X driver in isolation, own bus | About 40 Hz ranging. Status codes handled. Checked against a tape measure at several distances |
 | M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted |
 | M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3) |
 | M7 | Task layout, core pinning, GPTimer watchdog, failsafe state machine | Gates low within the 150 ms rule when the link is pulled. Loop jitter p99.9 < 100 µs. Core 1 never touches Wi-Fi locks |
@@ -427,6 +430,7 @@ franken-e58/
 | R3 | Browser joystick latency | Measured in M6, with native UDP as the fallback control path |
 | R4 | Flash write stalls | No flash writes while armed (§4.2, rule 6) |
 | R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core |
+| R6 | Accelerometer magnitude reads 1.068 g at rest (M3), so correction gated on \|a\| near 1 g would be weakened | Calibrate before relying on it: normalise by the measured at-rest norm, or a six-position calibration in Phase 3 or 4. Set the Mahony weighting relative to the calibrated norm |
 
 ### 6.3 Architectural Decision Record
 

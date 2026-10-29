@@ -25,6 +25,12 @@ esp_err_t read_reg8(Device d, uint8_t reg, uint8_t* buf, size_t len, int timeout
 esp_err_t read_reg16(Device d, uint16_t reg, uint8_t* buf, size_t len, int timeout_ms);
 esp_err_t write_reg8(Device d, uint8_t reg, uint8_t value, int timeout_ms);
 
+// Writes to a two-byte big-endian register address (VL53L1X). The block form writes up
+// to kMaxReg16BlockLen bytes in one transfer, auto-incrementing the register address.
+constexpr size_t kMaxReg16BlockLen = 8;
+esp_err_t write_reg16(Device d, uint16_t reg, uint8_t value, int timeout_ms);
+esp_err_t write_reg16_block(Device d, uint16_t reg, const uint8_t* data, size_t len, int timeout_ms);
+
 // Bus recovery: removes devices and the bus, clocks SCL up to 9 times until SDA
 // releases, issues a STOP, then rebuilds the bus and re-adds the same devices.
 //

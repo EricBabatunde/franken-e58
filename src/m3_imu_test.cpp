@@ -2,7 +2,7 @@
 
 #include "board_config.h"
 
-#if FE_M3_TEST
+#if FE_M3_TEST || FE_M4_TEST
 
 #include <atomic>
 #include <cmath>
@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal_i2c.h"
+#include "seqlock.h"
 
 #if !FE_IMU_ISR_INSTRUMENT
 #error "The M3 bench test needs FE_IMU_ISR_INSTRUMENT"
@@ -98,33 +99,19 @@ struct Snapshot {
     Stats summary[kNumPhases];
 };
 
-// ---- Seqlock slot: Core 1 writes, Core 0 reads. Double buffer plus a sequence counter
-// that is odd while a write is in progress. No locks.
-Snapshot s_slot[2];
-std::atomic<uint32_t> s_seq{0};
+// ---- Seqlock slot (components/seqlock): Core 1 writes, Core 0 reads. No locks.
+SeqlockSlot<Snapshot> s_slot;
 
-void publish(const Snapshot& s) {
-    const uint32_t seq = s_seq.load(std::memory_order_relaxed);
-    s_seq.store(seq + 1, std::memory_order_relaxed);
-    std::atomic_thread_fence(std::memory_order_release);
-    std::memcpy(&s_slot[((seq + 2) / 2) & 1], &s, sizeof(s));
-    s_seq.store(seq + 2, std::memory_order_release);
-}
+void publish(const Snapshot& s) { s_slot.write(s); }
+bool read_snapshot(Snapshot* out) { return s_slot.read(out); }
 
-bool read_snapshot(Snapshot* out) {
-    for (int tries = 0; tries < 8; ++tries) {
-        const uint32_t s1 = s_seq.load(std::memory_order_acquire);
-        if ((s1 & 1u) == 0) {
-            std::memcpy(out, &s_slot[(s1 / 2) & 1], sizeof(*out));
-            std::atomic_thread_fence(std::memory_order_acquire);
-            if (s_seq.load(std::memory_order_relaxed) == s1) {
-                return true;
-            }
-        }
-        vTaskDelay(1);
-    }
-    return false;
-}
+// Phase-B-only mode for the M4 interference test (P5). Set before the tasks start.
+bool s_b_only = false;
+uint32_t s_b_seconds = kBSeconds;
+
+// Phase B figures handed to the M4 test once the Phase B summary has been printed.
+M3PhaseBResult s_b_result{};
+std::atomic<bool> s_b_result_ready{false};
 
 // ---- Core 1 task. After init: no logging, no allocation, no lock shared with Core 0.
 
@@ -314,6 +301,17 @@ void imu_task(void*) {
     }
     s_work.state = State::kRunning;
 
+    if (s_b_only) {
+        if (!configure(3, static_cast<uint8_t>(board::kImuDlpfCfg))) {
+            park();
+        }
+        run_phase(kB, s_b_seconds, board::kImuIsrDecimation, true);
+        drv_mpu6500::isr_set_notify_every(0);
+        s_work.state = State::kDone;
+        publish(s_work);
+        park();
+    }
+
     // Phase A1: raw pulses only, no reads (the status flag is never cleared by a read).
     if (!configure(1, kPhaseADlpfCfg)) {
         park();
@@ -482,7 +480,8 @@ void print_summary_a2(const Stats& s) {
              u(s.i2c_errors), u(s.isr_cycles_max), isr_us(s.isr_cycles_max));
 }
 
-void print_summary_b(const Stats& s, uint32_t heap_start, uint32_t heap_end, uint32_t stack_free) {
+void print_summary_b(const Stats& s, uint32_t heap_start, uint32_t heap_end, uint32_t stack_free,
+                     M3PhaseBResult* out) {
     const double rate = rate_hz(s.raw_pulses, s.length_us);
     const double expected = 1000.0 * board::kImuIsrDecimation;
     const double iv_mean = avg(s.iv_sum, s.iv_n);
@@ -522,6 +521,17 @@ void print_summary_b(const Stats& s, uint32_t heap_start, uint32_t heap_end, uin
              flag_jit ? "FLAG (> 200 us)" : "ok", kAccelMagMin, kAccelMagMax,
              flag_mag ? "FLAG" : "ok", kGyroBiasMaxDps, flag_bias ? "FLAG" : "ok",
              ok_heap ? "PASS" : "FAIL");
+
+    out->rate_hz = rate;
+    out->iv_sd_us = sdev(s.iv_sum, s.iv_sumsq, s.iv_n);
+    out->jitter_us = jitter;
+    out->burst_avg_us = avg(s.burst_sum, s.reads);
+    out->wake_max_us = s.lat_max;
+    out->wakes = s.wakes;
+    out->reads = s.reads;
+    out->missed = s.missed;
+    out->timeouts = s.timeouts;
+    out->i2c_errors = s.i2c_errors;
 }
 
 void report_task(void*) {
@@ -586,12 +596,14 @@ void report_task(void*) {
         if (s.summary_valid[kB] && !summary_printed[kB]) {
             const uint32_t heap_end = esp_get_free_heap_size();
             const uint32_t stack_free = static_cast<uint32_t>(uxTaskGetStackHighWaterMark(s_imu_task));
-            print_summary_b(s.summary[kB], heap_start, heap_end, stack_free);
+            print_summary_b(s.summary[kB], heap_start, heap_end, stack_free, &s_b_result);
+            s_b_result_ready.store(true, std::memory_order_release);
             summary_printed[kB] = true;
         }
 
         if (s.state == State::kDone && summary_printed[kB]) {
-            ESP_LOGI(TAG, "M3 bench test finished. Reset the board for a fresh run.");
+            ESP_LOGI(TAG, "%s", s_b_only ? "M3 Phase B finished."
+                                         : "M3 bench test finished. Reset the board for a fresh run.");
             vTaskDelete(nullptr);
         }
         if (s.state == State::kFailed && failure_printed) {
@@ -610,4 +622,22 @@ void m3_start() {
                             &s_imu_task, 1);
 }
 
-#endif  // FE_M3_TEST
+void m3_phase_b_start(uint32_t seconds) {
+    s_b_only = true;
+    s_b_seconds = seconds;
+    ESP_LOGI(TAG, "M3 Phase B only: %us at DLPF_CFG %d, decimation %d", u(seconds),
+             board::kImuDlpfCfg, board::kImuIsrDecimation);
+    xTaskCreatePinnedToCore(report_task, "m3_report", kReporterStackBytes, nullptr, 3, nullptr, 0);
+    xTaskCreatePinnedToCore(imu_task, "imu", kImuTaskStackBytes, nullptr, configMAX_PRIORITIES - 2,
+                            &s_imu_task, 1);
+}
+
+bool m3_phase_b_result(M3PhaseBResult* out) {
+    if (!s_b_result_ready.load(std::memory_order_acquire)) {
+        return false;
+    }
+    *out = s_b_result;
+    return true;
+}
+
+#endif  // FE_M3_TEST || FE_M4_TEST

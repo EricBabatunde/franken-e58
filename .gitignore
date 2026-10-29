@@ -3,3 +3,4 @@
 sdkconfig.*
 !sdkconfig.defaults
 .claude/settings.local.json
+docs/third_party/

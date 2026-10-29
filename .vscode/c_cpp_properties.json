@@ -186,6 +186,7 @@
                 "/home/eric/Documents/projects/franken-e58/components/board_config/include",
                 "/home/eric/Documents/projects/franken-e58/components/hal_gpio/include",
                 "/home/eric/Documents/projects/franken-e58/components/hal_i2c/include",
+                "/home/eric/Documents/projects/franken-e58/components/drv_mpu6500/include",
                 "/home/eric/Documents/projects/franken-e58/src",
                 ""
             ],
@@ -370,6 +371,7 @@
                     "/home/eric/Documents/projects/franken-e58/components/board_config/include",
                     "/home/eric/Documents/projects/franken-e58/components/hal_gpio/include",
                     "/home/eric/Documents/projects/franken-e58/components/hal_i2c/include",
+                    "/home/eric/Documents/projects/franken-e58/components/drv_mpu6500/include",
                     "/home/eric/Documents/projects/franken-e58/src",
                     ""
                 ]
