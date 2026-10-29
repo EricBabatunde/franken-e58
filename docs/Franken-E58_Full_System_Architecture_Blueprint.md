@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.4. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.5. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -43,7 +43,7 @@ The architecture decouples high-current actuation from low-signal sensing, and a
 | Breakout | Measurement | Interpretation |
 |---|---|---|
 | VL53L1X | **10 kΩ** SDA→VIN and SCL→VIN | Onboard 10 kΩ pull-ups, tied to the supply. Powered at 3.3 V, so they reference 3.3 V. |
-| IMU breakout (MPU-6500) | **Open** SDA→VCC and SCL→VCC | Inconclusive. GY-521 pull-ups usually sit on the *regulated* side of the onboard regulator, so the VCC pin cannot see them. Optional check: power from 3.3 V, then measure DC volts SDA→GND. About 3 V means pull-ups present, about 0 V means none. |
+| IMU breakout (MPU-6500) | **Open** SDA→VCC and SCL→VCC | Inconclusive. IMU breakouts of this kind usually put the pull-ups on the regulated side of the onboard regulator, so the VCC pin cannot see them. Optional check: power from 3.3 V, then measure DC volts SDA→GND. About 3 V means pull-ups present, about 0 V means none. |
 
 **Pull-up strategy.** Fit **4.7 kΩ external pull-ups to 3V3 on all four lines** on the breadboard. This is safe in every case:
 
@@ -58,7 +58,7 @@ $$t_r \approx 0.8473\,R_p C_b < 300\,\text{ns} \;\Rightarrow\; R_p \lesssim 7\,\
 
 All combinations above sit inside 1 to 7 kΩ. Final PCB pull-up values are chosen in Phase 2 with the same formula.
 
-### 2.3 Board verification (Module 1 boot log)
+### 2.3 Board verification (Module 1 boot log, Module 2 bus test)
 
 | Item | Result |
 |---|---|
@@ -190,21 +190,21 @@ Each motor has an independent low-side switch:
 5. **No PSRAM** for flight data or code. Control code is in IRAM or internal flash cache and control data in internal DRAM.
 6. **No flash writes (LittleFS, NVS) while armed.** Flash operations disable the cache and can stall IRAM-unsafe code. Firmware write paths refuse to run in the `ARMED` state.
 7. **Yield properly.** `flight_task` blocks on its notification each cycle, so IDLE1 runs and the task watchdog stays satisfied.
-8. **Hand-offs are lock-free.** SPSC ring for telemetry, atomic timestamped slot for setpoints, seqlock slot for ToF. No mutexes shared with Core 0.
-9. **No I2C bus recovery in the flight loop.** A stalled IMU is handled by the missing-data-ready cut trigger (§4.8). Bus recovery by tear-down and rebuild allocates memory, so it is allowed only while DISARMED, never from the flight loop. Investigate `i2c_master_bus_reset()` in M3 as an allocation-free option.
+8. **Hand-offs are lock-free.** SPSC ring for telemetry, atomic timestamped slot for setpoints, seqlock slot for ToF. Never share a user-level mutex, semaphore or queue with Core 0. The FreeRTOS kernel spinlock taken by task notifications is unavoidable; its effect on wake-up latency is measured in M3 (Wi-Fi off) and M7 (Wi-Fi on).
+9. **No I2C bus recovery in the flight loop.** A stalled IMU is handled by the missing-data-ready cut trigger (§4.8). Bus recovery by tear-down and rebuild allocates memory, so it is allowed only while DISARMED, never from the flight loop. Investigate `i2c_master_bus_reset()` in M3 as an allocation-free option. Investigated in M3 (ESP-IDF 5.5.3): allocation-free; takes the shared periph_spinlock briefly; on the ESP32-S3 the driver does not wait for the 9-pulse bus clear to finish, so the clear may be cut short; callable only by the task that owns the bus, between transfers. Usable for recovery while DISARMED only.
 
 ### 4.3 Timing Budget (1 kHz, 1000 µs frame)
 
 | Step | Estimate | Note |
 |---|---|---|
-| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 200 µs |
+| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it) |
 | Filters, attitude, PID, mixer | < 150 µs | ESP32-S3 at 240 MHz with single-precision FPU. **To be measured** |
 | MCPWM update plus telemetry enqueue | < 50 µs | **To be measured** |
 | **Margin** | **≥ 350 µs** | Target loop-period jitter p99.9 < 100 µs |
 
 ### 4.4 Signal Chain
 
-1. **MPU-6500 configuration** (registers to be verified against the datasheet and register map):
+1. **MPU-6500 configuration** (registers verified in docs/mpu6500_notes.md, which carries the page references):
    * `PWR_MGMT_1` (0x6B): init sequence. Write 0x80 (`DEVICE_RESET`), wait at least 100 ms, confirm `PWR_MGMT_1` reads 0x01 (`SLEEP` = 0, `CLKSEL` = 1: auto-select, PLL if ready), then configure all other registers. The IMU is not power-cycled when the ESP32 resets, so it may still hold its previous configuration. Never write 0x00 to `PWR_MGMT_1` (it selects the internal oscillator, ±10 % over temperature). Allow 35 ms after waking before trusting the gyro.
    * `SMPLRT_DIV` (0x19) = 0 gives 1 kHz only when `FCHOICE_B` = 00 and `DLPF_CFG` = 1 to 6. It is ignored for `DLPF_CFG` 0 or 7 (8 kHz) and when the DLPF is bypassed (32 kHz).
    * `CONFIG` (0x1A): `DLPF_CFG` as a compile-time constant (default 1: 184 Hz gyro bandwidth, 2.9 ms delay, about 3.5 ms total gyro delay including the I²C read and processing). `DLPF_CFG` = 2 is 92 Hz and 3.9 ms. The 188 Hz/1.9 ms and 98 Hz/2.8 ms figures are the temperature-sensor column of the datasheet table, not the gyro. The alternative `DLPF_CFG` = 0 is described in item 2.
@@ -359,7 +359,7 @@ franken-e58/
 |---|---|---|
 | M1 | PlatformIO skeleton, `platformio.ini`, `sdkconfig.defaults`, USB CDC logging, GPIO 4 to 7 driven low at boot, LED blink probe | Builds and flashes. Timestamped log lines over USB. `menuconfig` names verified. **Onboard LED GPIO identified. Native USB socket identified** (the one that enumerates with VID `303a`) |
 | M2 | Dual-bus I²C scan and soak, with bus-recovery routine | MPU at 0x68 and ToF at 0x29 detected. 10-minute soak at 400 kHz with zero NACKs or timeouts. Recovery tested |
-| M3 | MPU-6500 driver: config, `DLPF_CFG` as a compile-time constant (default 1: 184 Hz) plus ISR decimation factor, INT-driven read | `WHO_AM_I` = 0x70. INT rate 1000 ± 10 Hz at `DLPF_CFG` = 1 (sensor clock ±1 %). INT rate at `DLPF_CFG` = 0 measured (8000 ± 80 Hz if the gyro drives data-ready). Loop $\Delta t$ from the interrupt timestamp. No missed samples in 10 min. Jitter measured |
+| M3 | MPU-6500 driver: config, `DLPF_CFG` as a compile-time constant (default 1: 184 Hz) plus ISR decimation factor, INT-driven read | `WHO_AM_I` = 0x70. INT rate 1000 ± 10 Hz at `DLPF_CFG` = 1 (sensor clock ±1 %). INT rate at `DLPF_CFG` = 0 measured (8000 ± 80 Hz expected if the gyro drives data-ready; the measurement decides, not a pass threshold). Loop $\Delta t$ from the interrupt timestamp. No missed samples in 10 min. Jitter measured |
 | M4 | VL53L1X driver in isolation, own bus | About 50 Hz ranging. Status codes handled. Checked against a tape measure at several distances |
 | M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted |
 | M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3) |
@@ -426,6 +426,7 @@ franken-e58/
 | R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O4), and a lighter-draw pack |
 | R3 | Browser joystick latency | Measured in M6, with native UDP as the fallback control path |
 | R4 | Flash write stalls | No flash writes while armed (§4.2, rule 6) |
+| R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core |
 
 ### 6.3 Architectural Decision Record
 
@@ -434,7 +435,7 @@ franken-e58/
 | Pure ESP-IDF on the official `espressif32` platform | The hybrid `arduino, espidf` build on the official platform pins Arduino 2.0.17 on ESP-IDF 4.4.7, which lacks the 5.x GPTimer, MCPWM and I²C driver APIs this design uses. Pure ESP-IDF gives the 5.x APIs and fits the goal of learning ESP-IDF |
 | Ground-up firmware, ESP-Drone as reference only | Keeps the build modular and testable. ESP-Drone is a pure ESP-IDF project, so it reads directly as a reference |
 | Two I²C buses | A ToF transaction cannot delay an IMU read |
-| 1 kHz loop, INT-driven sampling | Clean $\Delta t$, sensor-synchronised loop |
+| 1 kHz loop, INT-driven sampling | Sensor-synchronised loop; $\Delta t$ measured from the interrupt timestamp |
 | WebSocket for the browser, UDP for tools | Browsers cannot send UDP |
 | Mahony attitude plus a 3-state altitude Kalman filter | Linear altitude model, so an extended filter is unnecessary. Cheaper at 1 kHz |
 | Ceramic-only regulator capacitors | Tantalum inrush failure risk on a battery-connected rail |

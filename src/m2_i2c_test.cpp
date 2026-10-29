@@ -16,7 +16,7 @@ namespace {
 const char* TAG = "m2";
 using hal_i2c::Bus;
 
-// MPU-6050 registers (verify against the datasheet and register map)
+// MPU-6500 registers (verify against the datasheet and register map)
 constexpr uint8_t kMpuRegWhoAmI = 0x75;      // expect 0x68
 constexpr uint8_t kMpuRegAccelXoutH = 0x3B;  // start of the 14-byte burst
 constexpr uint8_t kMpuWhoAmI = 0x68;
@@ -277,7 +277,7 @@ void m2_start() {
     const bool mpu_present = a_state == kPublished;
     const bool tof_present = b.present;
     if (!mpu_present) {
-        ESP_LOGE(TAG, "MPU-6050 not found at 0x%02X. Check 3V3, GND, SDA/SCL on GPIO %d/%d, AD0 to GND, pull-ups.",
+        ESP_LOGE(TAG, "MPU not found at 0x%02X. Check 3V3, GND, SDA/SCL on GPIO %d/%d, AD0 to GND, pull-ups.",
                  board::kMpuAddr, board::kImuSda, board::kImuScl);
     }
     if (!tof_present) {

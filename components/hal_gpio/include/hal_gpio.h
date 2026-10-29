@@ -12,4 +12,11 @@ esp_err_t motor_pins_init_low();
 esp_err_t tof_xshut_init();
 void tof_xshut_set(bool run);
 
+// IMU data-ready (INT pin, push-pull, active high): input, rising-edge interrupt.
+// Installs the GPIO ISR service with ESP_INTR_FLAG_IRAM, so the handler must be IRAM_ATTR.
+// The service is allocated on the calling core: call this from the task pinned to the core
+// that should take the interrupt. The interrupt is enabled on return.
+using IsrHandler = void (*)(void*);
+esp_err_t imu_int_install(IsrHandler handler, void* arg);
+
 }  // namespace hal_gpio

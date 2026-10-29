@@ -3,7 +3,7 @@
 Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is ground-up ESP-IDF 5.x (PlatformIO, official `espressif32` platform, `framework = espidf`, no Arduino). The binding spec is `docs/Franken-E58_Full_System_Architecture_Blueprint.md`. Read the sections relevant to the current module before starting. Do not load the whole file unless it is needed.
 
 ## Status
-- Phase 1 (breadboard, props off, no motors). Current module: M2, see `docs/M2_package.md`.
+- Phase 1 (breadboard, props off, no motors). Current module: M3, see `docs/M3_package.md`.
 - Work on ONE module at a time. Never add features from later modules.
 
 ## Commands
@@ -31,7 +31,7 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 - Pin numbers and limits live ONLY in `components/board_config`.
 - Static allocation only after initialisation. No heap allocation after initialisation, and no printf or ESP_LOG, on Core 1.
 - ISRs and control paths are IRAM_ATTR and do the minimum (notify, timestamp).
-- Lock-free hand-offs between cores (SPSC ring, atomic slot, seqlock). Never share a mutex with Core 0.
+- Lock-free hand-offs between cores (SPSC ring, atomic slot, seqlock). Never share a user-level mutex, semaphore or queue with Core 0. The FreeRTOS kernel spinlock taken by task notifications is unavoidable; its effect on wake-up latency is measured in M3 (Wi-Fi off) and M7 (Wi-Fi on).
 - Every module ships a bench test and a timing measurement hook.
 
 ## Safety

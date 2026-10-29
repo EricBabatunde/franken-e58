@@ -11,6 +11,7 @@
 #include "hal_gpio.h"
 #include "led_probe.h"
 #include "m2_i2c_test.h"
+#include "m3_imu_test.h"
 
 static const char* TAG = "main";
 
@@ -53,6 +54,10 @@ extern "C" void app_main(void) {
 
 #if FE_M2_TEST
     m2_start();
+#endif
+
+#if FE_M3_TEST
+    m3_start();
 #endif
 
     // 4. Heartbeat: 1 Hz, microsecond timestamp from the 64-bit esp_timer.

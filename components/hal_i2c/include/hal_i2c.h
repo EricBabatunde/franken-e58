@@ -20,7 +20,7 @@ esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz);
 esp_err_t add_device(Bus bus, uint8_t addr7, Device* out);
 esp_err_t probe(Bus bus, uint8_t addr7, int timeout_ms);
 
-// reg8: one-byte register address (MPU-6050). reg16: two-byte big-endian address (VL53L1X).
+// reg8: one-byte register address (MPU-6500). reg16: two-byte big-endian address (VL53L1X).
 esp_err_t read_reg8(Device d, uint8_t reg, uint8_t* buf, size_t len, int timeout_ms);
 esp_err_t read_reg16(Device d, uint16_t reg, uint8_t* buf, size_t len, int timeout_ms);
 esp_err_t write_reg8(Device d, uint8_t reg, uint8_t value, int timeout_ms);

@@ -15,7 +15,7 @@
 
 ## 1. Goals
 
-1. Both sensors respond on their own bus: MPU-6050 at 0x68 on I2C0 (GPIO 1/2), VL53L1X at 0x29 on I2C1 (GPIO 11/12).
+1. Both sensors respond on their own bus: MPU-6500 at 0x68 on I2C0 (GPIO 1/2), VL53L1X at 0x29 on I2C1 (GPIO 11/12).
 2. Each sensor's ID register reads back correctly.
 3. A recovery routine (tear down, clock SCL up to 9 times, STOP, rebuild) restores a stuck or glitched bus without a reboot.
 4. A 10-minute soak at 400 kHz shows zero errors on both buses.
@@ -99,7 +99,7 @@ esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz);
 esp_err_t add_device(Bus bus, uint8_t addr7, Device* out);
 esp_err_t probe(Bus bus, uint8_t addr7, int timeout_ms);
 
-// reg8: one-byte register address (MPU-6050). reg16: two-byte big-endian address (VL53L1X).
+// reg8: one-byte register address (MPU-6500). reg16: two-byte big-endian address (VL53L1X).
 esp_err_t read_reg8(Device d, uint8_t reg, uint8_t* buf, size_t len, int timeout_ms);
 esp_err_t read_reg16(Device d, uint16_t reg, uint8_t* buf, size_t len, int timeout_ms);
 esp_err_t write_reg8(Device d, uint8_t reg, uint8_t value, int timeout_ms);
@@ -322,7 +322,7 @@ namespace {
 const char* TAG = "m2";
 using hal_i2c::Bus;
 
-// MPU-6050 registers (verify against the datasheet and register map)
+// MPU-6500 registers (verify against the datasheet and register map)
 constexpr uint8_t kMpuRegWhoAmI = 0x75;      // expect 0x68
 constexpr uint8_t kMpuRegAccelXoutH = 0x3B;  // start of the 14-byte burst
 constexpr uint8_t kMpuWhoAmI = 0x68;
@@ -495,7 +495,7 @@ void m2_start() {
     const bool mpu_present = hal_i2c::probe(Bus::A, board::kMpuAddr, 20) == ESP_OK;
     const bool tof_present = hal_i2c::probe(Bus::B, board::kTofAddr, 20) == ESP_OK;
     if (!mpu_present) {
-        ESP_LOGE(TAG, "MPU-6050 not found at 0x%02X. Check 3V3, GND, SDA/SCL on GPIO %d/%d, AD0 to GND, pull-ups.",
+        ESP_LOGE(TAG, "MPU not found at 0x%02X. Check 3V3, GND, SDA/SCL on GPIO %d/%d, AD0 to GND, pull-ups.",
                  board::kMpuAddr, board::kImuSda, board::kImuScl);
     }
     if (!tof_present) {
@@ -539,7 +539,7 @@ void m2_start() {
 
 ```cpp
 // I2C (both buses)
-constexpr uint32_t kI2cHz = 400000;  // Fast-mode, the MPU-6050 maximum
+constexpr uint32_t kI2cHz = 400000;  // Fast-mode, the MPU-6500 maximum
 constexpr uint8_t kMpuAddr = 0x68;   // AD0 low
 constexpr uint8_t kTofAddr = 0x29;   // VL53L1X default
 ```
