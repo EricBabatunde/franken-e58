@@ -96,7 +96,7 @@ struct Reading {
 // budget. Does not start ranging. Safe to call again to recover the sensor.
 InitStatus init(hal_i2c::Bus bus);
 
-esp_err_t start_continuous(uint32_t period_ms);  // Pololu VL53L1X::startContinuous()
+esp_err_t start_continuous(uint32_t period_ms);  // Pololu VL53L1X::startContinuous(), ST period formula (D-M4-08)
 esp_err_t stop_continuous();                     // Pololu VL53L1X::stopContinuous()
 esp_err_t data_ready(bool* ready);               // Pololu VL53L1X::dataReady()
 

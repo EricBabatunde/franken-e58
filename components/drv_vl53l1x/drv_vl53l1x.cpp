@@ -8,8 +8,13 @@
 // paraphrased from the API source code, API user manual (UM2356), and VL53L1X datasheet."
 // Register addresses and values below are not documented in DS12385 or UM2356 (the
 // datasheet says register details are not exposed, DS p.16); they come from this library.
+// The inter-measurement period formula in start_continuous() comes from ST's
+// VL53L1X_SetInterMeasurementInMs() in the SparkFun VL53L1X Arduino Library (commit
+// e88f55d6d82a4a8c519ec90a2660e6ec799b4579, src/st_src/vl53l1x_class.cpp), under the same
+// BSD-3-Clause terms with "COPYRIGHT(c) 2018 STMicroelectronics" (M4 D-M4-08).
 //
 // Copyright (c) 2017, STMicroelectronics
+// Copyright (c) 2018, STMicroelectronics (VL53L1X_SetInterMeasurementInMs)
 // Copyright (c) 2018-2022, Pololu Corporation
 // All Rights Reserved
 //
@@ -569,9 +574,19 @@ uint32_t timing_budget_us() {
 }
 
 esp_err_t start_continuous(uint32_t period_ms) {
-    // Pololu VL53L1X::startContinuous(), from VL53L1_set_inter_measurement_period_ms()
+    // Pololu VL53L1X::startContinuous(), from VL53L1_set_inter_measurement_period_ms(),
+    // except the period value (M4 D-M4-08). Pololu writes period_ms * osc_calibrate_val,
+    // which measured 23.46 ms for 25 ms on the bench (42.63 Hz), below budget + 4 ms.
+    // ST's VL53L1X_SetInterMeasurementInMs() masks the value to 10 bits and scales by 1.075:
+    //   ClockPLL = ClockPLL & 0x3FF;
+    //   VL53L1_WrDWord(Device, VL53L1_SYSTEM__INTERMEASUREMENT_PERIOD,
+    //                  (uint32_t)(ClockPLL * InterMeasMs * 1.075));
+    // Source: SparkFun VL53L1X Arduino Library (ST ULD code, BSD-3-Clause, Copyright (c) 2018
+    // STMicroelectronics), commit e88f55d6d82a4a8c519ec90a2660e6ec799b4579,
+    // src/st_src/vl53l1x_class.cpp. See docs/THIRD_PARTY_LICENSES.md. Integer form here.
     s_io_err = ESP_OK;
-    wr32(SYSTEM__INTERMEASUREMENT_PERIOD, period_ms * s_osc_calibrate_val);
+    const uint32_t clock_pll = s_osc_calibrate_val & 0x3FFu;
+    wr32(SYSTEM__INTERMEASUREMENT_PERIOD, period_ms * clock_pll * 1075u / 1000u);
     wr8(SYSTEM__INTERRUPT_CLEAR, 0x01);  // sys_interrupt_clear_range
     wr8(SYSTEM__MODE_START, 0x40);       // mode_range__timed
     return s_io_err;

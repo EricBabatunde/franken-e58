@@ -42,14 +42,14 @@ All three are in `docs/datasheets/`. The datasheet does not expose the register 
 - **Memory and constants:** no heap allocation after init. Constants and limits live in `board_config`.
 
 ### Bench test (`src/m4_tof_test.cpp`, `FE_M4_TEST`)
-`FE_M4_TEST` is mutually exclusive with `FE_M2_TEST` and `FE_M3_TEST` (compile-time `#error`). Total about 15 minutes. A 15 s countdown is printed whenever the target must move.
+`FE_M4_TEST` is mutually exclusive with `FE_M2_TEST` and `FE_M3_TEST` (compile-time `#error`). `FE_M4_PHASES` in `board_config.h` selects the phases: bit n runs Pn, P0 always runs, the default 0x3E runs P1 to P5. With all phases the run takes about 17 minutes; the start-up line prints the time for the selected phases. A countdown is printed whenever the target must move: 45 s before each P2 step, 15 s elsewhere.
 - **P0:** init and ID check.
 - **P1, 300 s static:** matte target at about 300 mm. Per 30 s window: rate, mean, standard deviation, min, max, valid % and a status histogram.
-- **P2, accuracy sweep:** 100, 200, 400, 800 and 1200 mm, each with a 15 s countdown and 30 s of sampling. Per step: mean, standard deviation, min, max, error against nominal, valid %.
+- **P2, accuracy sweep:** 100, 200, 400 and 800 mm, each with a 45 s countdown and 30 s of sampling. Every step ends on time even if all readings are invalid. Per step: mean, standard deviation, min, max, error against nominal ("n/a" with no valid reading), valid %. The SUMMARY gives error and valid % per step. 1200 mm was dropped: it is at the edge of the short-mode range (about 1.3 m).
 - **P3, invalid cases:** 20 s covered by a hand at about 20 mm, then 20 s pointed at open space. Report the statuses and confirm no stale distance is published.
 - **P4, reset recovery:** three XSHUT reset cycles while ranging. Time from release to the first valid reading.
 - **P5, interference, 300 s:** M3 Phase B on Core 1 while the ToF runs at 40 Hz on Core 0. Compared with the M3 baseline: interval standard deviation 0.44 µs, jitter 3.7 µs, wake maximum 13 µs, burst average 450.4 µs, zero missed. P5 doubles as the M3 regression check.
-- One SUMMARY line per phase.
+- One SUMMARY line per phase (`SUMMARY Pn: skipped` for a phase not selected). At the end of the run, or after a P0 failure, every SUMMARY line is printed again in one block between `===== M4 SUMMARY RECAP =====` and `===== end of recap =====`.
 
 ### Report-only investigations
 1. Default ROI and field of view, and how `SetROI` would narrow it for the Phase 4 mount.
@@ -68,6 +68,7 @@ All three are in `docs/datasheets/`. The datasheet does not expose the register 
 | D-M4-05 | P1 standard deviation is compared with 1 % repeatability (DS p.21), and P2 errors with ±20 mm (DS p.22, Table 19) plus 5 mm for the tape. Comparisons are printed for review, not as automatic failures | Datasheet figures are at a 100 ms budget (DS p.20); we run 20 ms |
 | D-M4-06 | `FE_IMU_ISR_INSTRUMENT` is on for M3 or M4. The M3 test builds under either flag and offers `m3_phase_b_start(seconds)` | P5 reruns M3 Phase B |
 | D-M4-07 | Header-only `components/seqlock` (`SeqlockSlot<T>`), used by `tof_task` and the M3 test | One implementation instead of two |
+| D-M4-08 | Inter-measurement period register = `period_ms × (OSC_CALIBRATE_VAL & 0x3FF) × 1.075` (ST `VL53L1X_SetInterMeasurementInMs()`, SparkFun BSD-3 copy), replacing Pololu's `period_ms × OSC_CALIBRATE_VAL` | First bench run: Pololu's formula gave 42.63 Hz, a real period of 23.46 ms for 25 ms, below budget + 4 ms (UM2356 p.5). Acceptance 3 unchanged |
 
 ## 3. Acceptance criteria
 1. Clean build and `tools/verify_sdkconfig.sh` passes.
@@ -84,13 +85,13 @@ All three are in `docs/datasheets/`. The datasheet does not expose the register 
 1. **Wiring:** as M2 (`docs/M2_package.md` §2), with the IMU wired as for M3. XSHUT is GPIO 8.
 2. **Flags:** `FE_M4_TEST` 1, `FE_M2_TEST` and `FE_M3_TEST` 0. Build is clean and `tools/verify_sdkconfig.sh` passes.
 3. **Equipment:** a matte target, such as grey card or cardboard larger than the field of view (about 27° full cone, so roughly 15 cm wide at 300 mm), and a tape measure. Measure from the sensor's front face. Avoid sunlight on the sensor.
-4. **Flash and monitor.** Follow the `>>>` prompts. Each one counts down 15 s before measuring.
+4. **Flash and monitor.** Start the monitor from the project folder: the `log2file` filter saves everything to `logs/device-monitor-YYMMDD-HHMMSS.log` (ignored by git), including any reset or backtrace. Follow the `>>>` prompts; each counts down before measuring (45 s for P2 steps, 15 s otherwise). To repeat one phase, set `FE_M4_PHASES` (for example 0x04 for P2 only), rebuild and flash.
    - **P1:** hold the target still at 300 mm for 5 minutes. A clamp or stack of books is better than a hand.
-   - **P2:** move the target to 100, 200, 400, 800 and 1200 mm when prompted.
+   - **P2:** move the target to 100, 200, 400 and 800 mm when prompted.
    - **P3:** cover the sensor with your hand at about 20 mm, then point it at open space with nothing within 1.3 m. A ceiling higher than 1.3 m works.
    - **P4:** hold the target at about 300 mm.
    - **P5:** keep the board still for 5 minutes. The `m3` lines print the IMU windows.
-5. **Copy back:** every SUMMARY line, the P2 step lines, the P4 lines, the M3 `SUMMARY B` and `SUMMARY B checks` lines, and any error or warning.
+5. **Copy back:** the recap block, the P2 step lines, the P4 lines, the M3 `SUMMARY B` and `SUMMARY B checks` lines, and any error or warning. If the output stops, send the end of the newest log file.
 
 ## 5. Files
 
@@ -112,4 +113,6 @@ Also changed:
 - `hal_i2c`: `write_reg16`, `write_reg16_block`.
 - `board_config.h`: ToF constants, test flags, `FE_IMU_ISR_INSTRUMENT`.
 - `src/m3_imu_test.*`: shared seqlock, Phase-B-only entry point.
-- `src/main.cpp`, `src/CMakeLists.txt`, `.gitignore` (`docs/third_party/`).
+- `src/main.cpp`, `src/CMakeLists.txt`, `.gitignore` (`docs/third_party/`, `logs/`).
+- `platformio.ini`: `log2file` monitor filter.
+- `docs/THIRD_PARTY_LICENSES.md`: ST period formula (D-M4-08).

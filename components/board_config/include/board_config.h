@@ -70,6 +70,14 @@ static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
 // Set to 0 to skip the Module 4 bench test.
 #define FE_M4_TEST 1
 
+// Module 4 phases to run: bit n runs Pn (n = 1 to 5). P0 (init and ID check) always runs.
+// 0x3E runs P1 to P5; 0x04 runs P2 only.
+#define FE_M4_PHASES 0x20
+
+#if (FE_M4_PHASES) & ~0x3E
+#error "FE_M4_PHASES: only bits 1 to 5 (P1 to P5) may be set"
+#endif
+
 #if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST) > 1
 #error "FE_M2_TEST, FE_M3_TEST and FE_M4_TEST are mutually exclusive: enable only one"
 #endif

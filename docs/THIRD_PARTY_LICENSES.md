@@ -60,6 +60,27 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## ST VL53L1X ultra lite driver, via the SparkFun VL53L1X library
+
+| Item | Value |
+|---|---|
+| Project | SparkFun VL53L1X Arduino Library, https://github.com/sparkfun/SparkFun_VL53L1X_Arduino_Library |
+| Commit used | `e88f55d6d82a4a8c519ec90a2660e6ec799b4579` |
+| File used | `src/st_src/vl53l1x_class.cpp` (ST code, "@author IMG", 14-December-2018) |
+| Code used | The formula in `VL53L1X_SetInterMeasurementInMs()`: `(OSC_CALIBRATE_VAL & 0x3FF) * InterMeasMs * 1.075`, written to `SYSTEM__INTERMEASUREMENT_PERIOD` |
+| Licence | BSD 3-Clause, from the file's own header |
+| Used by | `components/drv_vl53l1x/drv_vl53l1x.cpp`, `start_continuous()` (M4 D-M4-08) |
+
+**Licence check (M4).**
+- The file header grants BSD-3-Clause under "COPYRIGHT(c) 2018 STMicroelectronics". The conditions and disclaimer match the text above, except that condition 3 names STMicroelectronics instead of "the copyright holder".
+- Checked against the file downloaded at the commit above. No local copy is kept.
+
+**Copyright notice:**
+
+```
+COPYRIGHT(c) 2018 STMicroelectronics
+```
+
 **Obligations for this project:**
 - Keep the notices and licence text above in every derived source file (condition 1).
 - Ship this file, or its contents, with any binary release (condition 2).
