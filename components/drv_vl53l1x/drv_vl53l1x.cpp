@@ -543,9 +543,12 @@ InitStatus init(hal_i2c::Bus bus) {
         e = s_io_err;
     }
 
-    // Franken-E58 settings: short mode and the configured budget (board_config).
+    // Franken-E58 settings: the configured distance mode and budget (board_config).
+    static_assert(static_cast<int>(board::TofDistanceMode::kLong) == static_cast<int>(DistanceMode::kLong) &&
+                      static_cast<int>(board::TofDistanceMode::kShort) == static_cast<int>(DistanceMode::kShort),
+                  "board::TofDistanceMode must match drv_vl53l1x::DistanceMode");
     if (e == ESP_OK) {
-        e = set_distance_mode(DistanceMode::kShort);
+        e = set_distance_mode(static_cast<DistanceMode>(board::kTofDistanceMode));
     }
     if (e == ESP_OK) {
         e = set_timing_budget_us(board::kTofTimingBudgetUs);

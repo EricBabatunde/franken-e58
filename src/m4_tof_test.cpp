@@ -306,9 +306,12 @@ bool phase0() {
                  esp_err_to_name(st.init.err));
     }
     ESP_LOGI(TAG, "P0: bus B %s | bus B lines before creation: %s | init %s | model ID 0x%04X | %s"
-                  " | start_continuous %s | short mode, budget %u us, period %u ms",
+                  " | start_continuous %s | %s mode, budget %u us, period %u ms",
              esp_err_to_name(st.bus_err), lines_str(st.bus_lines, lines, sizeof(lines)), init,
              st.init.model_id, boot, init_ok ? esp_err_to_name(st.start_err) : "not run",
+             board::kTofDistanceMode == board::TofDistanceMode::kShort    ? "short"
+             : board::kTofDistanceMode == board::TofDistanceMode::kMedium ? "medium"
+                                                                         : "long",
              u(board::kTofTimingBudgetUs), u(board::kTofPeriodMs));
     print_boot_diag(st.init);
     ESP_LOGI(TAG, "%s", summary(0, "SUMMARY P0: %s (model ID 0x%04X, expected 0xEACC)", ok ? "PASS" : "FAIL",
@@ -442,6 +445,7 @@ void phase4() {
 }
 
 void phase5() {
+    char h[200];
     ESP_LOGI(TAG, "P5: keep the board still; M3 Phase B runs %u s on Core 1 while the ToF runs on Core 0",
              u(kP5Seconds));
     countdown("P5: keep the board still", kP5PrerollSeconds);
@@ -467,12 +471,12 @@ void phase5() {
              "SUMMARY P5: IMU interval sd %.2f us (M3 %.2f; < %.0f: %s) | jitter %.1f us (M3 %.1f;"
              " < %.0f: %s) | wake max %u us (M3 %u; < %u: %s) | burst avg %.1f us (M3 %.1f)"
              " | missed %u timeouts %u i2c_err %u (%s) | IMU rate %.2f Hz | ToF rate %.2f Hz,"
-             " valid %.1f %%, no-data %u",
+             " valid %.1f %%, no-data %u | ToF status: %s",
              imu.iv_sd_us, kM3IvSdUs, kP5IvSdMaxUs, ok_sd ? "PASS" : "FAIL", imu.jitter_us, kM3JitterUs,
              kP5JitterMaxUs, ok_jit ? "PASS" : "FAIL", u(imu.wake_max_us), u(kM3WakeMaxUs),
              u(kP5WakeMaxUs), ok_wake ? "PASS" : "FAIL", imu.burst_avg_us, kM3BurstAvgUs,
              u(imu.missed), u(imu.timeouts), u(imu.i2c_errors), ok_missed ? "PASS" : "FAIL", imu.rate_hz,
-             rate(tof), valid_pct(tof), u(tof.no_data)));
+             rate(tof), valid_pct(tof), u(tof.no_data), hist_str(tof, h, sizeof(h))));
 }
 
 // Approximate run time of the selected phases, in seconds (P4: about 1 s per cycle).

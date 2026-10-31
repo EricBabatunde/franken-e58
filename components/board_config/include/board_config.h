@@ -46,7 +46,14 @@ static_assert((kImuDlpfCfg >= 1 && kImuDlpfCfg <= 6 && kImuIsrDecimation == 1) |
               "kImuIsrDecimation must be 1 for DLPF_CFG 1 to 6, and 8 only with DLPF_CFG 0");
 
 // VL53L1X configuration (DS = datasheet DS12385, UM2356 = full API manual).
+// Distance mode: Short kept, Long and Medium considered and not adopted (M4 D-M4-09).
+// Same order as drv_vl53l1x::DistanceMode.
+enum class TofDistanceMode : uint8_t { kShort, kMedium, kLong };
+constexpr TofDistanceMode kTofDistanceMode = TofDistanceMode::kShort;
 constexpr uint32_t kTofTimingBudgetUs = 20000;  // shortest budget, short mode only (DS p.10, UM2356 p.9)
+// Minimum budget: 20 ms in Short mode only, 33 ms for every mode (DS p.10).
+constexpr uint32_t kTofMinBudgetUs = (kTofDistanceMode == TofDistanceMode::kShort) ? 20000 : 33000;
+static_assert(kTofTimingBudgetUs >= kTofMinBudgetUs, "timing budget below the minimum for this distance mode (DS p.10)");
 constexpr uint32_t kTofPeriodMs = 25;           // > budget + 4 ms (UM2356 p.5, p.10): 40 Hz
 constexpr bool kTofIo2v8 = true;                // 2V8 I/O mode, the Pololu init() default
 constexpr uint32_t kTofBootTimeoutMs = 100;     // boot is 1.2 ms maximum (DS p.11)
@@ -59,6 +66,7 @@ constexpr uint32_t kTofDiagLevelsAfterReleaseMs = 10;  // SDA/SCL/XSHUT sample a
 constexpr uint32_t kTofDiagXshutLowMs = 100;           // retry: XSHUT low time
 constexpr uint32_t kTofDiagBootTimeoutMs = 200;        // retry: boot wait
 constexpr uint32_t kTofDiagScanMaxTimeouts = 3;        // scan stops after this many timeouts in a row
+// UM2356 p.5: "longer than the timing budget + 4 ms", so strictly greater.
 static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
               "inter-measurement period must exceed timing budget + 4 ms (UM2356 p.5)");
 

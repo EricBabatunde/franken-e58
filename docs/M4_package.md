@@ -68,6 +68,8 @@ All three are in `docs/datasheets/`. The datasheet does not expose the register 
 | D-M4-05 | P1 standard deviation is compared with 1 % repeatability (DS p.21), and P2 errors with ±20 mm (DS p.22, Table 19) plus 5 mm for the tape. Comparisons are printed for review, not as automatic failures | Datasheet figures are at a 100 ms budget (DS p.20); we run 20 ms |
 | D-M4-06 | `FE_IMU_ISR_INSTRUMENT` is on for M3 or M4. The M3 test builds under either flag and offers `m3_phase_b_start(seconds)` | P5 reruns M3 Phase B |
 | D-M4-07 | Header-only `components/seqlock` (`SeqlockSlot<T>`), used by `tof_task` and the M3 test | One implementation instead of two |
+| D-M4-09 | **Long and Medium considered, not adopted; Short mode kept.** Can be reopened through a blueprint diff | (1) Under strong ambient light (200 kcps/SPAD) the maximum range is Short 135 cm, Medium 76 cm, Long 73 cm; in the dark Short 136 cm, Medium 290 cm, Long 360 cm (DS p.9, Table 5, measured at a 100 ms budget per the test conditions on DS p.10, so shorter at 33 ms). Short is the only mode that keeps its range in bright light. (2) 20 ms is the minimum budget and only in Short mode; 33 ms is the minimum for every mode (DS p.10). With the period longer than budget + 4 ms (UM2356 p.5) Medium or Long need a period of at least 38 ms: about 26 to 27 Hz instead of about 40 Hz. (3) The reading lags by about one budget: 33 ms instead of 20 ms in the altitude loop. (4) Longer reach gives more far-field "range valid" ghost readings (R7). (5) P1 to P5 would be rerun and the P2 accuracy re-measured. The 11:59 run on 31 October (all readings out of bounds) was a test-setup issue, not a reason to change mode |
+| D-M4-10 | `board::kTofDistanceMode` (default Short), applied in `drv_vl53l1x::init()` through `set_distance_mode()`. Compile-time checks: budget at least 20 ms in Short mode and 33 ms in Medium or Long (DS p.10); period strictly longer than budget + 4 ms (UM2356 p.5, "longer than") | A mode change is one constant plus a budget and period that the build checks |
 | D-M4-08 | Inter-measurement period register = `period_ms × (OSC_CALIBRATE_VAL & 0x3FF) × 1.075` (ST `VL53L1X_SetInterMeasurementInMs()`, SparkFun BSD-3 copy), replacing Pololu's `period_ms × OSC_CALIBRATE_VAL` | First bench run: Pololu's formula gave 42.63 Hz, a real period of 23.46 ms for 25 ms, below budget + 4 ms (UM2356 p.5). Acceptance 3 unchanged |
 
 ## 3. Acceptance criteria
@@ -90,7 +92,7 @@ All three are in `docs/datasheets/`. The datasheet does not expose the register 
    - **P2:** move the target to 100, 200, 400 and 800 mm when prompted.
    - **P3:** cover the sensor with your hand at about 20 mm, then point it at open space with nothing within 1.3 m. A ceiling higher than 1.3 m works.
    - **P4:** hold the target at about 300 mm.
-   - **P5:** keep the board still for 5 minutes. The `m3` lines print the IMU windows.
+   - **P5:** keep the board still for 5 minutes, with a target (for example a stack of books) within about 300 mm of the sensor. With nothing within about 1.3 m, Short mode reports every reading as out of bounds and P5 shows ToF valid 0 %. The `m3` lines print the IMU windows; the P5 SUMMARY line ends with the ToF status breakdown.
 5. **Copy back:** the recap block, the P2 step lines, the P4 lines, the M3 `SUMMARY B` and `SUMMARY B checks` lines, and any error or warning. If the output stops, send the end of the newest log file.
 
 ## 5. Files
@@ -111,7 +113,7 @@ docs/THIRD_PARTY_LICENSES.md
 
 Also changed:
 - `hal_i2c`: `write_reg16`, `write_reg16_block`.
-- `board_config.h`: ToF constants, test flags, `FE_IMU_ISR_INSTRUMENT`.
+- `board_config.h`: ToF constants, distance mode and its compile-time checks (D-M4-10), test flags, `FE_M4_PHASES`, `FE_IMU_ISR_INSTRUMENT`.
 - `src/m3_imu_test.*`: shared seqlock, Phase-B-only entry point.
 - `src/main.cpp`, `src/CMakeLists.txt`, `.gitignore` (`docs/third_party/`, `logs/`).
 - `platformio.ini`: `log2file` monitor filter.
@@ -148,17 +150,19 @@ Log files are in `logs/` (not in git). The P1 run predates the `log2file` filter
 
 ### Failed P5 rerun (not the M4 result)
 
-A later P5 rerun (`device-monitor-261030-222201.log`) ran after a jumper wire on the ToF wiring had failed. The ToF dropped out: 0.05 Hz, valid 21.4 %, 3,582 no-data records over 300 s. The IMU figures were unaffected: interval sd 0.47 µs, jitter 3.7 µs, wake max 16 µs, burst average 450.4 µs, 0 missed. M4's pass rests on the earlier clean P5 run (ToF 39.68 Hz, 100 % valid).
+A later P5 rerun (`device-monitor-261030-222201.log`) ran after the bus B connection to the ToF had failed (bad solder joints, see "Fault and fix" below). The ToF dropped out: 0.05 Hz, valid 21.4 %, 3,582 no-data records over 300 s. The IMU figures were unaffected: interval sd 0.47 µs, jitter 3.7 µs, wake max 16 µs, burst average 450.4 µs, 0 missed. M4's pass rests on the earlier clean P5 run (ToF 39.68 Hz, 100 % valid).
 
 ### Heap during P5
 
-Both P5 runs ended with the same heap figures: 8701624 B free at the start of M3 Phase B and 8701404 B at the end (this total includes PSRAM). The heartbeat lines show internal free heap dropping by 220 B once, between t = 10 s and 11 s, when M3's first 10 s window prints, and then staying flat. It is a one-time step, not a drift. `SUMMARY B checks` now reports heap start, end and change as information instead of a PASS/FAIL "heap unchanged" check.
+Every P5 run shows the same −220 B change: 8701624 B to 8701404 B in both 30 October runs, and 8701088 B to 8700868 B in both 31 October runs (`…115903`, `…121248`; the start figure moved with the C1 code). These totals include PSRAM. The heartbeat lines show internal free heap dropping by 220 B once, between t = 10 s and 11 s, when M3's first 10 s window prints, and then staying flat. It is a one-time step, not a drift. `SUMMARY B checks` now reports heap start, end and change as information instead of a PASS/FAIL "heap unchanged" check.
 
 ### P0 failures after the wiring fault
 
 From 02:16 on 30 October, 37 boots failed P0 with the same signature: `init step 2 (ESP_ERR_TIMEOUT)`, model ID 0x0000. The sensor never reported "booted" within 100 ms of XSHUT release. No IDF I2C error lines appeared during these boot polls; IDF 5.5.3 logs a NACK only at debug level but a bus timeout at error level, so the polls were most probably NACKed. Boots that had already passed P0 later logged "I2C transaction timeout detected" and then delivered only no-data records. Follow-ups:
 - **C1 (approved):** boot-time SDA/SCL check and 9-clock bus clear on both buses, plus ToF boot diagnostics in P0.
 - **C2 (proposal, later module):** `tof_task` re-initialises the sensor through XSHUT after N silent periods, with an attempt limit.
+
+Resolved on 31 October: see "Fault and fix" below.
 
 ### C1: bus line check and ToF boot diagnostics (added after the M4 pass)
 
@@ -169,3 +173,28 @@ From 02:16 on 30 October, 37 boots failed P0 with the same signature: `init step
   - On a failed boot poll only: one scan of bus B (0x08 to 0x77; `ESP_ERR_NOT_FOUND` = NACK, `ESP_ERR_TIMEOUT` = bus timeout; stops after 3 timeouts in a row), then one retry with XSHUT low 100 ms and a 200 ms boot wait. The retry is a diagnostic: P0 still fails.
   - `start_continuous` is printed only when init succeeded.
 - **Side effect:** (c) waits until 10 ms after release even on a healthy boot, so every init takes up to 10 ms longer. P4's "release to first valid reading" will read about 10 ms longer than the M4 results above (43 to 44 ms).
+
+### Fault and fix (31 October 2026)
+
+- **Root cause:** bad solder joints on the VL53L1X breakout's SDA and SCL pins. Fixed by resoldering both pins.
+- **How it was found:**
+  - The P0 failures above all had one signature: boot poll timeout, model ID 0x0000.
+  - The C1 diagnostics showed SDA and SCL both low before bus B was created, when the ESP32 drives neither line, and the scan stopped after three bus timeouts. Bus A read idle-high throughout.
+  - Meter checks: continuity passed and nothing was shorted with the power off (SDA and SCL about 4.7 kΩ to GND and about 3.3 to 3.5 kΩ to 3V3, the breadboard 4.7 kΩ pull-ups in parallel with the breakout's own). Powered, SCL sat at about 0.4 to 0.7 V even with the ESP32 held in reset. A 2 s power cycle of the breakout did not clear it.
+- **After the fix:** `bus B lines before creation: SDA 1 SCL 1, idle, no clear`, model ID 0xEACC, init OK. The module now boots 1.18 ms after XSHUT release (186 to 320 µs before), still within the 1.2 ms maximum (DS p.11).
+- **Not related:** an unrelated Arduino sketch was briefly flashed during the investigation. It reads GPIO 8 and 9, which on this board are the ToF XSHUT and the IMU INT line, so its "SCL held low" message was false. It is irrelevant to this build.
+
+### Confirming P5 after the fix (31 October 2026): M4 passed
+
+`device-monitor-261031-121248.log`, `FE_M4_PHASES 0x20`, with a target (a stack of books) in front of the sensor:
+
+| Item | Result |
+|---|---|
+| P0 | PASS: bus B lines idle-high, model ID 0xEACC, boot 1178 µs |
+| ToF | 39.65 Hz, valid 100 %, 0 no-data |
+| IMU | Interval sd 0.49 µs, jitter 3.6 µs, wake max 12 µs, burst average 450.5 µs, 0 missed, 0 timeouts, 0 I2C errors, 999.64 Hz (all within the acceptance 8 limits) |
+| Heap | −220 B, the same one-time step |
+
+The earlier run that morning (`…115903`) showed ToF 39.71 Hz but valid 0.0 %: nothing was within Short mode's range of about 1.3 m, so every reading was "out of bounds". That is the designed behaviour (no stale distance was published), not a fault; a stack of books in front of the sensor fixed it. P5's SUMMARY line now ends with the ToF status breakdown, so such a run shows the cause directly.
+
+**M4 passed.** The pass rests on the 30 October results and is confirmed by this run after the wiring fix.
