@@ -116,6 +116,7 @@ constexpr int kTimeoutMs = 10;
 constexpr uint32_t kXshutLowMs = 10;
 
 // Driver state, owned by the tof_task. Pololu VL53L1X class members.
+hal_i2c::Bus s_bus = hal_i2c::Bus::B;
 hal_i2c::Device s_dev{};
 bool s_have_dev = false;
 esp_err_t s_io_err = ESP_OK;       // first I2C error since it was last cleared (Pololu last_status)
@@ -174,23 +175,83 @@ uint16_t rd16(uint16_t reg) {
     return static_cast<uint16_t>((b[0] << 8) | b[1]);
 }
 
+// M4 C1: SDA, SCL and XSHUT pad levels, read without disturbing the bus.
+Levels levels() {
+    const hal_i2c::Lines l = hal_i2c::read_lines(s_bus);
+    Levels v;
+    v.sda = l.sda;
+    v.scl = l.scl;
+    v.xshut = static_cast<int8_t>(hal_gpio::tof_xshut_level());
+    return v;
+}
+
 // Pololu VL53L1X::init(), "VL53L1_poll_for_boot_completion()": FIRMWARE__SYSTEM_STATUS
 // bit 0 set and the read itself succeeded (the sensor NACKs while booting).
-bool wait_booted(uint32_t* boot_us) {
-    const uint32_t start = now_us();
+// Franken-E58 (M4 C1): counts the polls, keeps the last error and status byte, and if
+// `at_10ms` is given samples the levels 10 ms after release, waiting for that point if the
+// sensor boots sooner (adds up to 10 ms to init).
+BootPoll wait_booted(uint32_t timeout_ms, uint32_t release_us, Levels* at_10ms) {
+    constexpr uint32_t kLevelsAfterUs = board::kTofDiagLevelsAfterReleaseMs * 1000;
+    BootPoll p;
     for (;;) {
         uint8_t v = 0;
         const esp_err_t e = hal_i2c::read_reg16(s_dev, FIRMWARE__SYSTEM_STATUS, &v, 1, kTimeoutMs);
-        if (e == ESP_OK && (v & 0x01) != 0) {
-            if (boot_us != nullptr) {
-                *boot_us = now_us() - start;
-            }
-            return true;
+        const uint32_t t = now_us() - release_us;
+        p.polls++;
+        p.last_err = e;
+        if (e == ESP_OK) {
+            p.last_status = v;
         }
-        if (now_us() - start > board::kTofBootTimeoutMs * 1000) {
-            return false;
+        if (e == ESP_OK && (v & 0x01) != 0) {
+            p.booted = true;
+            p.boot_us = t;
+            break;
+        }
+        if (at_10ms != nullptr && at_10ms->sda < 0 && t >= kLevelsAfterUs) {
+            *at_10ms = levels();
+        }
+        if (t > timeout_ms * 1000) {
+            break;
         }
         vTaskDelay(1);
+    }
+    if (at_10ms != nullptr && at_10ms->sda < 0) {
+        while (now_us() - release_us < kLevelsAfterUs) {
+            vTaskDelay(1);
+        }
+        *at_10ms = levels();
+    }
+    return p;
+}
+
+// M4 C1: probes every 7-bit address outside the reserved ranges (I2C specification),
+// stopping after a run of timeouts so a stuck bus does not stall init.
+void scan_bus(BootDiag* d) {
+    constexpr uint8_t kFirst = 0x08;
+    constexpr uint8_t kLast = 0x77;
+    d->scanned = true;
+    uint32_t timeouts_in_row = 0;
+    for (uint8_t a = kFirst; a <= kLast; ++a) {
+        const esp_err_t e = hal_i2c::probe(s_bus, a, kTimeoutMs);
+        if (e == ESP_ERR_TIMEOUT) {
+            d->n_timeout++;
+            if (++timeouts_in_row >= board::kTofDiagScanMaxTimeouts) {
+                d->scan_aborted = true;
+                return;
+            }
+            continue;
+        }
+        timeouts_in_row = 0;
+        if (e == ESP_OK) {
+            if (d->n_answered < kScanMaxFound) {
+                d->found[d->n_answered] = a;
+            }
+            d->n_answered++;
+        } else if (e == ESP_ERR_NOT_FOUND) {
+            d->n_nack++;
+        } else {
+            d->n_other++;
+        }
     }
 }
 
@@ -360,6 +421,7 @@ const char* range_status_name(RangeStatus s) {
 
 InitStatus init(hal_i2c::Bus bus) {
     InitStatus st{};
+    s_bus = bus;
     if (!s_have_dev) {
         const esp_err_t e = hal_i2c::add_device(bus, board::kTofAddr, &s_dev);
         if (e != ESP_OK) {
@@ -376,15 +438,29 @@ InitStatus init(hal_i2c::Bus bus) {
     s_saved_vhv_timeout = 0;
 
     // XSHUT reset: hardware standby, then release (DS p.11, power-up option 1).
+    // M4 C1: levels sampled before the pulse, at its middle and 10 ms after release.
+    st.diag.before = levels();
     hal_gpio::tof_xshut_init();
-    vTaskDelay(pdMS_TO_TICKS(kXshutLowMs));
+    vTaskDelay(pdMS_TO_TICKS(kXshutLowMs / 2));
+    st.diag.mid = levels();
+    vTaskDelay(pdMS_TO_TICKS(kXshutLowMs - kXshutLowMs / 2));
     hal_gpio::tof_xshut_set(true);
     st.release_us = now_us();
-    if (!wait_booted(&st.boot_us)) {
+    st.diag.poll = wait_booted(board::kTofBootTimeoutMs, st.release_us, &st.diag.after);
+    if (!st.diag.poll.booted) {
         st.err = ESP_ERR_TIMEOUT;
         st.step = InitStep::kBootTimeout;
+        // M4 C1 diagnostics. The retry result never changes the outcome of this init.
+        st.diag.end = levels();
+        scan_bus(&st.diag);
+        hal_gpio::tof_xshut_set(false);
+        vTaskDelay(pdMS_TO_TICKS(board::kTofDiagXshutLowMs));
+        hal_gpio::tof_xshut_set(true);
+        st.diag.retry = wait_booted(board::kTofDiagBootTimeoutMs, now_us(), nullptr);
+        st.diag.retried = true;
         return st;
     }
+    st.boot_us = st.diag.poll.boot_us;
 
     // Pololu VL53L1X::init(): "check model ID and module type registers".
     s_io_err = ESP_OK;
@@ -401,7 +477,7 @@ InitStatus init(hal_i2c::Bus bus) {
     wr8(SOFT_RESET, 0x01);
     // "give it some time to boot; otherwise the sensor NACKs" (Pololu: delay(1))
     vTaskDelay(pdMS_TO_TICKS(1) + 1);
-    if (!wait_booted(nullptr)) {
+    if (!wait_booted(board::kTofBootTimeoutMs, now_us(), nullptr).booted) {
         st.err = ESP_ERR_TIMEOUT;
         st.step = InitStep::kBootTimeout;
         return st;

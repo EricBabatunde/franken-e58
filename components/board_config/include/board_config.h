@@ -53,6 +53,12 @@ constexpr uint32_t kTofBootTimeoutMs = 100;     // boot is 1.2 ms maximum (DS p.
 constexpr uint16_t kTofMinValidMm = 40;         // minimum guaranteed ranging distance (DS p.21)
 constexpr uint32_t kTofNoDataPeriods = 3;       // publish "no data" after this many silent periods
 constexpr uint32_t kTofPollMs = 2;              // data-ready poll interval near the end of a period
+// Boot diagnostics (M4 C1). The level sample runs on every init; the scan and the retry run
+// only when the boot poll fails, and never change the init result.
+constexpr uint32_t kTofDiagLevelsAfterReleaseMs = 10;  // SDA/SCL/XSHUT sample after XSHUT release
+constexpr uint32_t kTofDiagXshutLowMs = 100;           // retry: XSHUT low time
+constexpr uint32_t kTofDiagBootTimeoutMs = 200;        // retry: boot wait
+constexpr uint32_t kTofDiagScanMaxTimeouts = 3;        // scan stops after this many timeouts in a row
 static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
               "inter-measurement period must exceed timing budget + 4 ms (UM2356 p.5)");
 

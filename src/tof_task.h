@@ -26,6 +26,7 @@ enum class TofState : uint8_t { kStarting, kRunning, kFailed };
 struct TofStatus {
     TofState state;
     esp_err_t bus_err;
+    hal_i2c::LineCheck bus_lines;   // bus B lines before creation (M4 C1)
     esp_err_t start_err;            // start_continuous() after the latest init
     drv_vl53l1x::InitStatus init;   // latest init (first, or after a reset)
     uint32_t inits;                 // init attempts so far

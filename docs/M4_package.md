@@ -116,3 +116,56 @@ Also changed:
 - `src/main.cpp`, `src/CMakeLists.txt`, `.gitignore` (`docs/third_party/`, `logs/`).
 - `platformio.ini`: `log2file` monitor filter.
 - `docs/THIRD_PARTY_LICENSES.md`: ST period formula (D-M4-08).
+
+## 6. Results (bench, 30 October 2026): M4 passed
+
+Log files are in `logs/` (not in git). The P1 run predates the `log2file` filter, so its figures come from the copied terminal output.
+
+### Measured results
+
+| Phase | Log | Result |
+|---|---|---|
+| P0 | every good run | Model ID 0xEACC, boot 308 to 320 µs after XSHUT release |
+| P1 (first run, before D-M4-08) | terminal copy | 42.63 Hz, valid 100 %, mean 283.0 mm, sd 1.50 mm, 17-byte result read min/avg/max 540/541/554 µs, 0 no-data, 0 missed records. The stale count of 12791 was the double-count bug, fixed afterwards |
+| P2 | `device-monitor-261030-014016.log` | 100 mm: +3.6 mm (sd 2.23); 200 mm: −17.8 mm (sd 1.79); 400 mm: −10.7 mm (sd 1.58); 800 mm: +16.4 mm (sd 2.09). Valid 100 % at every step, 0 flagged above 25 mm. The 1200 mm step was dropped: it is at the short-mode limit of about 1.3 m |
+| P3 | `…014707`, `…014932`, `…015143` | Stale distances 0 in all three runs (PASS). Hand: 287, 0 and 0 valid readings (the first attempt probably had the hand above 40 mm for part of the run). Open space: 0, 40 and 28 valid of 795 (0 %, 5.0 %, 3.5 %), the rest "out of bounds fail" |
+| P4 | `…015527` | 3/3 recovered. XSHUT release to first valid reading 44.2, 43.2 and 43.2 ms; boot 186 to 212 µs |
+| P5 | `…015753` | IMU interval sd 0.46 µs, jitter 3.7 µs, wake max 12 µs, burst average 450.5 µs, 0 missed, 0 timeouts, 0 I2C errors, 999.70 Hz. ToF 39.68 Hz, valid 100 %, 0 no-data |
+
+### Acceptance
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Clean build, `tools/verify_sdkconfig.sh` | PASS |
+| 2 | Model ID, boot, init | PASS |
+| 3 | 40 ± 2 Hz over P1 | PASS on the P5 evidence: 39.68 Hz over 300 s at the same ToF settings. Deviation: the P1 rerun after D-M4-08 could not complete because of the bus B wiring fault below, so the rate is taken from P5 (option A, agreed). P1 before the fix measured 42.63 Hz, the cause of D-M4-08 |
+| 4 | P1 valid ≥ 99 %, sd reported | PASS: valid 100 %, sd 1.50 mm against 2.8 mm (1 % of the mean, DS p.21, 100 ms budget) |
+| 5 | P2 errors reported, flag above 25 mm | PASS: largest error 17.8 mm, none flagged |
+| 6 | P3 invalid statuses never published as a distance | PASS: 0 stale in all runs |
+| 7 | P4 recovers 3 times | PASS: 43 to 44 ms |
+| 8 | P5 IMU limits | PASS |
+| 9 | BSD-3 licence confirmed | PASS (`docs/THIRD_PARTY_LICENSES.md`) |
+
+### Failed P5 rerun (not the M4 result)
+
+A later P5 rerun (`device-monitor-261030-222201.log`) ran after a jumper wire on the ToF wiring had failed. The ToF dropped out: 0.05 Hz, valid 21.4 %, 3,582 no-data records over 300 s. The IMU figures were unaffected: interval sd 0.47 µs, jitter 3.7 µs, wake max 16 µs, burst average 450.4 µs, 0 missed. M4's pass rests on the earlier clean P5 run (ToF 39.68 Hz, 100 % valid).
+
+### Heap during P5
+
+Both P5 runs ended with the same heap figures: 8701624 B free at the start of M3 Phase B and 8701404 B at the end (this total includes PSRAM). The heartbeat lines show internal free heap dropping by 220 B once, between t = 10 s and 11 s, when M3's first 10 s window prints, and then staying flat. It is a one-time step, not a drift. `SUMMARY B checks` now reports heap start, end and change as information instead of a PASS/FAIL "heap unchanged" check.
+
+### P0 failures after the wiring fault
+
+From 02:16 on 30 October, 37 boots failed P0 with the same signature: `init step 2 (ESP_ERR_TIMEOUT)`, model ID 0x0000. The sensor never reported "booted" within 100 ms of XSHUT release. No IDF I2C error lines appeared during these boot polls; IDF 5.5.3 logs a NACK only at debug level but a bus timeout at error level, so the polls were most probably NACKed. Boots that had already passed P0 later logged "I2C transaction timeout detected" and then delivered only no-data records. Follow-ups:
+- **C1 (approved):** boot-time SDA/SCL check and 9-clock bus clear on both buses, plus ToF boot diagnostics in P0.
+- **C2 (proposal, later module):** `tof_task` re-initialises the sensor through XSHUT after N silent periods, with an attempt limit.
+
+### C1: bus line check and ToF boot diagnostics (added after the M4 pass)
+
+- **Line check before each bus is created (`hal_i2c::init()`):** SDA and SCL are read. SDA low with SCL high triggers up to 9 SCL clocks and a STOP; SCL low is recorded and not clocked. The outcome is kept per bus (`hal_i2c::line_check()`) and printed from Core 0: bus B in the P0 line, bus A by the M3 reporter (M3 and M4 P5). `recover()` still calls `bitbang_clear()` directly and records nothing; `bitbang_clear()` now returns its clock count and is otherwise unchanged.
+- **ToF boot diagnostics (`drv_vl53l1x::init()`, `InitStatus::diag`):**
+  - SDA/SCL/XSHUT levels (a) before the XSHUT pulse, (b) at its middle, (c) 10 ms after release, (d) at the end of a failed boot poll. Printed on one P0 line.
+  - Boot poll count, last I2C error and last status byte. IDF 5.5.3 returns `ESP_ERR_INVALID_STATE` for both a NACK and a bus timeout (`i2c_master.c:726`), so the scan is what separates them.
+  - On a failed boot poll only: one scan of bus B (0x08 to 0x77; `ESP_ERR_NOT_FOUND` = NACK, `ESP_ERR_TIMEOUT` = bus timeout; stops after 3 timeouts in a row), then one retry with XSHUT low 100 ms and a 200 ms boot wait. The retry is a diagnostic: P0 still fails.
+  - `start_continuous` is printed only when init succeeded.
+- **Side effect:** (c) waits until 10 ms after release even on a healthy boot, so every init takes up to 10 ms longer. P4's "release to first valid reading" will read about 10 ms longer than the M4 results above (43 to 44 ms).

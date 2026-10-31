@@ -224,6 +224,61 @@ void recap() {
     }
 }
 
+// "1/1/0" for SDA/SCL/XSHUT, "-" if not sampled.
+const char* levels_str(const drv_vl53l1x::Levels& l, char* buf, size_t len) {
+    if (l.sda < 0) {
+        snprintf(buf, len, "-");
+    } else {
+        snprintf(buf, len, "%d/%d/%d", l.sda, l.scl, l.xshut);
+    }
+    return buf;
+}
+
+// Bus B line check before creation (M4 C1).
+const char* lines_str(const hal_i2c::LineCheck& c, char* buf, size_t len) {
+    if (c.action == hal_i2c::LineAction::kCleared || c.action == hal_i2c::LineAction::kSdaStuck) {
+        snprintf(buf, len, "SDA %d SCL %d, %s after %u clocks, now SDA %d SCL %d", c.before.sda,
+                 c.before.scl, hal_i2c::line_action_name(c.action), c.clocks, c.after.sda, c.after.scl);
+    } else {
+        snprintf(buf, len, "SDA %d SCL %d, %s", c.before.sda, c.before.scl, hal_i2c::line_action_name(c.action));
+    }
+    return buf;
+}
+
+// P0 boot diagnostics (M4 C1): levels on every run; boot poll, scan and retry on failure.
+void print_boot_diag(const drv_vl53l1x::InitStatus& init) {
+    const drv_vl53l1x::BootDiag& d = init.diag;
+    char a[16], b[16], c[16], e[16];
+    ESP_LOGI(TAG, "P0 levels SDA/SCL/XSHUT: before pulse %s | mid pulse %s | release+%u ms %s"
+                  " | end of failed poll %s",
+             levels_str(d.before, a, sizeof(a)), levels_str(d.mid, b, sizeof(b)),
+             u(board::kTofDiagLevelsAfterReleaseMs), levels_str(d.after, c, sizeof(c)),
+             levels_str(d.end, e, sizeof(e)));
+    if (d.scanned) {
+        char found[8 * 6] = "";
+        size_t n = 0;
+        for (int i = 0; i < d.n_answered && i < drv_vl53l1x::kScanMaxFound; ++i) {
+            n += snprintf(found + n, sizeof(found) - n, "%s0x%02X", i ? " " : "", d.found[i]);
+        }
+        ESP_LOGW(TAG, "P0 scan bus B 0x08-0x77: %s%s (%u answered, %u NACK, %u timeout, %u other)%s",
+                 d.n_answered ? "answered: " : "no address answered", found, d.n_answered, d.n_nack,
+                 d.n_timeout, d.n_other, d.scan_aborted ? "; STOPPED after repeated timeouts" : "");
+    }
+    if (d.retried) {
+        if (d.retry.booted) {
+            ESP_LOGW(TAG, "P0 retry (XSHUT low %u ms, boot wait %u ms): booted after %u us (%u polls);"
+                          " diagnostic only, P0 verdict unchanged",
+                     u(board::kTofDiagXshutLowMs), u(board::kTofDiagBootTimeoutMs), u(d.retry.boot_us),
+                     d.retry.polls);
+        } else {
+            ESP_LOGW(TAG, "P0 retry (XSHUT low %u ms, boot wait %u ms): FAILED, %u polls, last error %s,"
+                          " last status 0x%02X; diagnostic only, P0 verdict unchanged",
+                     u(board::kTofDiagXshutLowMs), u(board::kTofDiagBootTimeoutMs), d.retry.polls,
+                     esp_err_to_name(d.retry.last_err), d.retry.last_status);
+        }
+    }
+}
+
 bool phase0() {
     tof_task_start();
     TofStatus st{};
@@ -232,11 +287,30 @@ bool phase0() {
         if (tof_status(&st) && st.state != TofState::kStarting) break;
     }
     const bool ok = st.state == TofState::kRunning;
-    ESP_LOGI(TAG, "P0: bus B %s | init step %u (%s) | model ID 0x%04X | boot %u us after XSHUT release"
+    const bool init_ok = st.init.step == drv_vl53l1x::InitStep::kNone;
+    const drv_vl53l1x::BootPoll& poll = st.init.diag.poll;
+    char lines[120];
+    char boot[120];
+    if (poll.booted) {
+        snprintf(boot, sizeof(boot), "boot %u us after XSHUT release (%u polls)", u(poll.boot_us), poll.polls);
+    } else {
+        snprintf(boot, sizeof(boot), "boot poll: %u polls in %u ms, last I2C error %s (NACK or bus timeout),"
+                 " last status 0x%02X", poll.polls, u(board::kTofBootTimeoutMs), esp_err_to_name(poll.last_err),
+                 poll.last_status);
+    }
+    char init[48];
+    if (init_ok) {
+        snprintf(init, sizeof(init), "OK");
+    } else {
+        snprintf(init, sizeof(init), "step %u (%s)", static_cast<unsigned>(st.init.step),
+                 esp_err_to_name(st.init.err));
+    }
+    ESP_LOGI(TAG, "P0: bus B %s | bus B lines before creation: %s | init %s | model ID 0x%04X | %s"
                   " | start_continuous %s | short mode, budget %u us, period %u ms",
-             esp_err_to_name(st.bus_err), static_cast<unsigned>(st.init.step), esp_err_to_name(st.init.err),
-             st.init.model_id, u(st.init.boot_us), esp_err_to_name(st.start_err),
+             esp_err_to_name(st.bus_err), lines_str(st.bus_lines, lines, sizeof(lines)), init,
+             st.init.model_id, boot, init_ok ? esp_err_to_name(st.start_err) : "not run",
              u(board::kTofTimingBudgetUs), u(board::kTofPeriodMs));
+    print_boot_diag(st.init);
     ESP_LOGI(TAG, "%s", summary(0, "SUMMARY P0: %s (model ID 0x%04X, expected 0xEACC)", ok ? "PASS" : "FAIL",
                                 st.init.model_id));
     return ok;

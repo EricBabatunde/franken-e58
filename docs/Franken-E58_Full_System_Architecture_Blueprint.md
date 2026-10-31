@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.6. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.7. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -70,6 +70,7 @@ All combinations above sit inside 1 to 7 kΩ. Final PCB pull-up values are chose
 | I2C buses | Both verified at 400 kHz: 10-minute soak, zero errors on both (M2) |
 | IMU timing | 1 kHz interrupt-driven: 999.74 Hz, interval standard deviation 0.44 µs, ISR-to-task wake 6 to 13 µs, 14-byte burst 450 µs, 10 minutes with zero missed samples (M3) |
 | 8 kHz mode | DLPF_CFG 0 gives 7997.9 Hz data-ready with no reads; under read traffic one raw pulse was occasionally lost (raw interval up to 251 µs, read interval up to 1126 µs) (M3) |
+| ToF | VL53L1X short mode, 20 ms budget: 39.68 Hz, valid 100 %, sd 1.5 mm at about 300 mm, mean error within 18 mm at 100 to 800 mm (M4); 17-byte result read 541 µs; reset to first valid reading about 43 ms |
 
 ---
 
@@ -233,6 +234,9 @@ Each motor has an independent low-side switch:
    $$y = r\cos\phi\cos\theta,\quad H=[1\;0\;0],\quad K=PH^\top(HPH^\top+R)^{-1},\quad x\leftarrow x+K(y-Hx),\quad P\leftarrow(I-KH)P$$
    The dynamics and measurement model are linear in the states (the tilt compensation is applied to the measurement outside the filter), so no linearisation is needed and an *extended* Kalman filter would add cost without benefit. An EKF is reserved for any future measurement with a nonlinear model (for example optical flow). Innovations beyond a gate are rejected, with an exception for persistent consistent readings (a terrain step, §5 Phase 5). The sensor latency (about one timing budget) is compensated.
 7. **ToF configuration (VL53L1X):** short distance mode (≤ about 1.3 m, best ambient immunity) at about 40 Hz (20 ms timing budget, 25 ms inter-measurement period). Read in `tof_task` on I2C1. Driver ported from the Pololu vl53l1x-arduino library (BSD-3-Clause, see docs/THIRD_PARTY_LICENSES.md).
+   * Measured in M4: 39.68 Hz after the period-register fix (D-M4-08: ST's inter-measurement formula, `OSC_CALIBRATE_VAL & 0x3FF` × period × 1.075; the Pololu formula gave 42.63 Hz, a 23.46 ms period, below budget + 4 ms).
+   * A reading is valid only with the "range valid" status and a range of at least 40 mm, the minimum guaranteed ranging distance (DS12385 p.21).
+   * In an empty room, 3.5 to 5 % of readings were still "range valid" (M4 P3). The altitude filter must therefore gate on status and on consistency with neighbouring readings (R7).
 
 ### 4.5 Control Laws
 
@@ -431,6 +435,7 @@ franken-e58/
 | R4 | Flash write stalls | No flash writes while armed (§4.2, rule 6) |
 | R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core |
 | R6 | Accelerometer magnitude reads 1.068 g at rest (M3), so correction gated on \|a\| near 1 g would be weakened | Calibrate before relying on it: normalise by the measured at-rest norm, or a six-position calibration in Phase 3 or 4. Set the Mahony weighting relative to the calibrated norm |
+| R7 | ToF reports occasional valid ghost readings in open space | Altitude filter gates on status and innovation, and accepts a range step only after N consecutive consistent readings (Phase 5 step 3) |
 
 ### 6.3 Architectural Decision Record
 

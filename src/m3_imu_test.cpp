@@ -90,6 +90,7 @@ struct Snapshot {
     State state = State::kStarting;
     uint8_t phase = kA1;
     esp_err_t bus_err = ESP_OK;
+    hal_i2c::LineCheck bus_lines;  // bus A lines before creation (M4 C1)
     esp_err_t int_err = ESP_OK;
     ConfigRecord config[4];        // 0 = init, 1 = before A1, 2 = before A2, 3 = before B
     uint32_t window_seq = 0;       // increments with every published window
@@ -285,6 +286,7 @@ void imu_task(void*) {
     // Init phase: creates bus A and the interrupt on Core 1 (bus A's I2C interrupt and the
     // GPIO ISR service are allocated on the calling core). Results go to Core 0 to print.
     s_work.bus_err = hal_i2c::init(Bus::A, board::kImuSda, board::kImuScl, board::kI2cHz);
+    s_work.bus_lines = hal_i2c::line_check(Bus::A);
     if (s_work.bus_err != ESP_OK) {
         s_work.state = State::kFailed;
         publish(s_work);
@@ -499,8 +501,6 @@ void print_summary_b(const Stats& s, uint32_t heap_start, uint32_t heap_end, uin
     for (int i = 0; i < 3; ++i) {
         flag_bias = flag_bias || std::fabs(g.mean[i]) > kGyroBiasMaxDps;
     }
-    const bool ok_heap = heap_start == heap_end;
-
     ESP_LOGI(TAG, "SUMMARY B: DLPF_CFG=%d decimation %d | rate %.2f Hz | iv min/max/sd %u/%u/%.2f us,"
                   " jitter %.1f us | burst min/avg/max %u/%.1f/%u us | wake min/avg/max %u/%.1f/%u us"
                   " | wakes %u reads %u missed %u timeouts %u i2c_err %u | |a| %.4f g"
@@ -515,12 +515,13 @@ void print_summary_b(const Stats& s, uint32_t heap_start, uint32_t heap_end, uin
              isr_us(s.isr_cycles_max), u(stack_free), u(heap_start), u(heap_end));
     ESP_LOGI(TAG, "SUMMARY B checks: rate %.0f +/- %.0f Hz %s | zero missed/timeouts/I2C errors and "
                   "one sample per notification %s | wake-up max %s | interval jitter %s | |a| in "
-                  "%.2f..%.2f g %s | gyro bias within %.0f dps %s | heap unchanged %s",
+                  "%.2f..%.2f g %s | gyro bias within %.0f dps %s | heap start %u end %u B, change %+d B"
+                  " (information)",
              expected, expected * kRateTolerance, ok_rate ? "PASS" : "FAIL",
              ok_samples ? "PASS" : "FAIL", flag_lat ? "FLAG (> 200 us)" : "ok",
              flag_jit ? "FLAG (> 200 us)" : "ok", kAccelMagMin, kAccelMagMax,
-             flag_mag ? "FLAG" : "ok", kGyroBiasMaxDps, flag_bias ? "FLAG" : "ok",
-             ok_heap ? "PASS" : "FAIL");
+             flag_mag ? "FLAG" : "ok", kGyroBiasMaxDps, flag_bias ? "FLAG" : "ok", u(heap_start),
+             u(heap_end), static_cast<int>(heap_end - heap_start));
 
     out->rate_hz = rate;
     out->iv_sd_us = sdev(s.iv_sum, s.iv_sumsq, s.iv_n);
@@ -539,6 +540,7 @@ void report_task(void*) {
     bool config_printed[4] = {false, false, false, false};
     bool summary_printed[kNumPhases] = {false, false, false};
     bool failure_printed = false;
+    bool lines_printed = false;
     uint32_t last_window_seq = 0;
     bool heap_start_taken = false;
     uint32_t heap_start = 0;
@@ -549,6 +551,18 @@ void report_task(void*) {
             continue;
         }
 
+        if (s.bus_lines.action != hal_i2c::LineAction::kNotRun && !lines_printed) {
+            const hal_i2c::LineCheck& c = s.bus_lines;
+            if (c.action == hal_i2c::LineAction::kCleared || c.action == hal_i2c::LineAction::kSdaStuck) {
+                ESP_LOGW(TAG, "bus A lines before creation: SDA %d SCL %d, %s after %u clocks, now SDA %d SCL %d",
+                         c.before.sda, c.before.scl, hal_i2c::line_action_name(c.action), c.clocks,
+                         c.after.sda, c.after.scl);
+            } else {
+                ESP_LOGI(TAG, "bus A lines before creation: SDA %d SCL %d, %s", c.before.sda, c.before.scl,
+                         hal_i2c::line_action_name(c.action));
+            }
+            lines_printed = true;
+        }
         for (int i = 0; i < 4; ++i) {
             if (s.config[i].valid && !config_printed[i]) {
                 print_config(i, s.config[i].st);

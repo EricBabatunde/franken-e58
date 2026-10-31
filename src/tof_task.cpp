@@ -70,6 +70,7 @@ bool init_and_start() {
 void tof_task(void*) {
     s_st.state = TofState::kStarting;
     s_st.bus_err = hal_i2c::init(hal_i2c::Bus::B, board::kTofSda, board::kTofScl, board::kI2cHz);
+    s_st.bus_lines = hal_i2c::line_check(hal_i2c::Bus::B);
     if (s_st.bus_err != ESP_OK) {
         s_st.state = TofState::kFailed;
         s_status.write(s_st);

@@ -25,18 +25,18 @@
 
 **Power off and unplug USB before wiring.** No battery in M2. Keep wires under about 15 cm and keep SDA and SCL apart.
 
-| ESP32-S3 | Device pin | Notes |
-|---|---|---|
-| 3V3 | MPU-6500 VCC, VL53L1X VIN | Sensors draw well under 30 mA |
-| GND | MPU-6500 GND, VL53L1X GND | One common ground rail |
-| GPIO 1 | MPU-6500 SDA | 4.7 kΩ to 3V3 |
-| GPIO 2 | MPU-6500 SCL | 4.7 kΩ to 3V3 |
-| GPIO 9 | MPU-6500 INT | Wire now, used in M3 |
-| MPU-6500 AD0 | GND | Forces address 0x68 |
-| GPIO 11 | VL53L1X SDA | 4.7 kΩ to 3V3 |
-| GPIO 12 | VL53L1X SCL | 4.7 kΩ to 3V3 |
-| GPIO 8 | VL53L1X XSHUT | Driven open-drain: low resets, released runs |
-| GPIO 13 | VL53L1X GPIO1 | Optional, wire now for M4 |
+| ESP32-S3     | Device pin                | Notes                                        |
+| ------------ | ------------------------- | -------------------------------------------- |
+| 3V3          | MPU-6500 VCC, VL53L1X VIN | Sensors draw well under 30 mA                |
+| GND          | MPU-6500 GND, VL53L1X GND | One common ground rail                       |
+| GPIO 1       | MPU-6500 SDA              | 4.7 kΩ to 3V3                                |
+| GPIO 2       | MPU-6500 SCL              | 4.7 kΩ to 3V3                                |
+| GPIO 9       | MPU-6500 INT              | Wire now, used in M3                         |
+| MPU-6500 AD0 | GND                       | Forces address 0x68                          |
+| GPIO 11      | VL53L1X SDA               | 4.7 kΩ to 3V3                                |
+| GPIO 12      | VL53L1X SCL               | 4.7 kΩ to 3V3                                |
+| GPIO 8       | VL53L1X XSHUT             | Driven open-drain: low resets, released runs |
+| GPIO 13      | VL53L1X GPIO1             | Optional, wire now for M4                    |
 
 Add 100 nF and 10 µF across 3V3 and GND close to each sensor.
 

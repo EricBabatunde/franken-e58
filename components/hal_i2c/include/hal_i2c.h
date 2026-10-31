@@ -16,7 +16,38 @@ struct Device {
     uint8_t slot;
 };
 
+// Pad levels of SDA and SCL (0 or 1; -1 = not read).
+struct Lines {
+    int8_t sda = -1;
+    int8_t scl = -1;
+};
+
+// What init() found on the lines before creating the bus (M4 C1).
+enum class LineAction : uint8_t {
+    kNotRun,   // init() not called yet
+    kIdle,     // both high: nothing to do
+    kCleared,  // SDA low, SCL high: clocked, SDA released
+    kSdaStuck, // SDA low, SCL high: clocked, SDA still low
+    kSclLow,   // SCL low: not clocked (the line is held by something else)
+};
+struct LineCheck {
+    LineAction action = LineAction::kNotRun;
+    Lines before;
+    Lines after;       // after the clear (kCleared and kSdaStuck only)
+    uint8_t clocks = 0;
+};
+
+// Before creating the bus, reads SDA and SCL. If SDA is low while SCL is high, clocks SCL
+// up to 9 times until SDA releases and issues a STOP. The outcome is kept for line_check().
+// No logging: bus A is created on Core 1. Callers report the outcome from Core 0.
 esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz);
+LineCheck line_check(Bus bus);
+const char* line_action_name(LineAction a);  // e.g. "idle, no clear"
+
+// Reads the pad levels without creating or disturbing a bus: only the pin inputs are
+// enabled. The Bus form uses the pins given to init() (both -1 before init()).
+Lines read_lines(int sda_gpio, int scl_gpio);
+Lines read_lines(Bus bus);
 esp_err_t add_device(Bus bus, uint8_t addr7, Device* out);
 esp_err_t probe(Bus bus, uint8_t addr7, int timeout_ms);
 

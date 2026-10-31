@@ -71,12 +71,50 @@ enum class InitStep : uint8_t {
     kBadSetting,    // timing budget out of range
 };
 
+// Franken-E58 boot diagnostics (M4 C1). Levels: 0 or 1; -1 = not sampled.
+struct Levels {
+    int8_t sda = -1;
+    int8_t scl = -1;
+    int8_t xshut = -1;
+};
+
+// One boot poll: FIRMWARE__SYSTEM_STATUS read until bit 0 is set or the wait runs out.
+struct BootPoll {
+    bool booted = false;
+    uint32_t boot_us = 0;          // release to the first booted read
+    uint16_t polls = 0;
+    esp_err_t last_err = ESP_OK;   // IDF 5.5.3 returns ESP_ERR_INVALID_STATE for a NACK and for a bus timeout
+    uint8_t last_status = 0;       // last FIRMWARE__SYSTEM_STATUS byte read successfully
+};
+
+constexpr int kScanMaxFound = 8;
+
+struct BootDiag {
+    Levels before;    // (a) before the XSHUT pulse
+    Levels mid;       // (b) middle of the low pulse
+    Levels after;     // (c) 10 ms after release (init waits for it on a fast boot)
+    Levels end;       // (d) end of a failed boot poll
+    BootPoll poll;
+    // Only after a failed boot poll: one bus scan, then one longer reset (diagnostic only;
+    // init() still reports kBootTimeout whatever the retry gives).
+    bool scanned = false;
+    bool scan_aborted = false;     // stopped after board::kTofDiagScanMaxTimeouts timeouts in a row
+    uint8_t n_answered = 0;
+    uint8_t found[kScanMaxFound] = {};  // first kScanMaxFound addresses that answered
+    uint8_t n_nack = 0;
+    uint8_t n_timeout = 0;
+    uint8_t n_other = 0;
+    bool retried = false;
+    BootPoll retry;
+};
+
 struct InitStatus {
     esp_err_t err = ESP_OK;
     InitStep step = InitStep::kNone;
     uint16_t model_id = 0;
     uint32_t release_us = 0;   // 32-bit esp_timer time XSHUT was released
     uint32_t boot_us = 0;      // release to first booted status read
+    BootDiag diag;
 };
 
 struct Reading {
@@ -94,6 +132,8 @@ struct Reading {
 // XSHUT reset and release, boot wait, model ID check, then the Pololu init() sequence
 // (software reset, DataInit, StaticInit), short distance mode and the configured timing
 // budget. Does not start ranging. Safe to call again to recover the sensor.
+// Records SDA/SCL/XSHUT levels around the reset and, if the boot poll fails, scans the bus
+// and retries once with a longer reset (InitStatus::diag). Never logs.
 InitStatus init(hal_i2c::Bus bus);
 
 esp_err_t start_continuous(uint32_t period_ms);  // Pololu VL53L1X::startContinuous(), ST period formula (D-M4-08)

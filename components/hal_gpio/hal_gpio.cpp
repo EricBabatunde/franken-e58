@@ -36,7 +36,7 @@ esp_err_t motor_pins_init_low() {
 esp_err_t tof_xshut_init() {
     gpio_config_t cfg = {};
     cfg.pin_bit_mask = 1ULL << board::kTofXshut;
-    cfg.mode = GPIO_MODE_OUTPUT_OD;  // level 1 = high impedance, level 0 = driven low
+    cfg.mode = GPIO_MODE_INPUT_OUTPUT_OD;  // level 1 = high impedance, level 0 = driven low; readable
     cfg.pull_up_en = GPIO_PULLUP_DISABLE;
     cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
     cfg.intr_type = GPIO_INTR_DISABLE;
@@ -49,6 +49,12 @@ esp_err_t tof_xshut_init() {
 
 void tof_xshut_set(bool run) {
     gpio_set_level(static_cast<gpio_num_t>(board::kTofXshut), run ? 1 : 0);
+}
+
+int tof_xshut_level() {
+    const gpio_num_t pin = static_cast<gpio_num_t>(board::kTofXshut);
+    gpio_input_enable(pin);  // leaves the output path as it is
+    return gpio_get_level(pin);
 }
 
 esp_err_t imu_int_install(IsrHandler handler, void* arg) {

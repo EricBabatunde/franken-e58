@@ -18,6 +18,7 @@ struct BusState {
     uint8_t n_dev = 0;
     uint8_t addr[kMaxDevicesPerBus] = {};
     i2c_master_dev_handle_t dev[kMaxDevicesPerBus] = {};
+    LineCheck lines;
 };
 
 BusState g_bus[2];
@@ -52,7 +53,8 @@ esp_err_t create_device(BusState& b, uint8_t slot) {
 }
 
 // Releases a slave that is holding SDA low mid-byte, then issues a STOP.
-void bitbang_clear(int sda, int scl) {
+// Returns the number of SCL pulses issued (0 if SDA was already high).
+uint8_t bitbang_clear(int sda, int scl) {
     gpio_config_t c = {};
     c.intr_type = GPIO_INTR_DISABLE;
     c.pull_up_en = GPIO_PULLUP_DISABLE;
@@ -71,7 +73,8 @@ void bitbang_clear(int sda, int scl) {
     gpio_set_level(sda_pin, 1);
     esp_rom_delay_us(10);
 
-    for (int i = 0; i < 9 && gpio_get_level(sda_pin) == 0; ++i) {
+    uint8_t clocks = 0;
+    for (; clocks < 9 && gpio_get_level(sda_pin) == 0; ++clocks) {
         gpio_set_level(scl_pin, 0);
         esp_rom_delay_us(5);
         gpio_set_level(scl_pin, 1);
@@ -88,9 +91,59 @@ void bitbang_clear(int sda, int scl) {
     esp_rom_delay_us(5);
     gpio_set_level(sda_pin, 1);
     esp_rom_delay_us(5);
+    return clocks;
+}
+
+// M4 C1: check the lines before the bus exists and clear a slave left holding SDA low,
+// e.g. by a reset in the middle of a transfer.
+LineCheck check_and_clear(int sda, int scl) {
+    LineCheck c;
+    c.before = read_lines(sda, scl);
+    if (c.before.scl == 0) {
+        c.action = LineAction::kSclLow;
+    } else if (c.before.sda == 0) {
+        c.clocks = bitbang_clear(sda, scl);
+        c.after = read_lines(sda, scl);
+        c.action = (c.after.sda == 1) ? LineAction::kCleared : LineAction::kSdaStuck;
+    } else {
+        c.action = LineAction::kIdle;
+    }
+    return c;
 }
 
 }  // namespace
+
+Lines read_lines(int sda_gpio, int scl_gpio) {
+    Lines l;
+    if (sda_gpio < 0 || scl_gpio < 0) {
+        return l;
+    }
+    const gpio_num_t sda = static_cast<gpio_num_t>(sda_gpio);
+    const gpio_num_t scl = static_cast<gpio_num_t>(scl_gpio);
+    gpio_input_enable(sda);  // leaves the output path and any I2C routing as they are
+    gpio_input_enable(scl);
+    l.sda = static_cast<int8_t>(gpio_get_level(sda));
+    l.scl = static_cast<int8_t>(gpio_get_level(scl));
+    return l;
+}
+
+Lines read_lines(Bus bus) {
+    const BusState& b = state(bus);
+    return read_lines(b.sda, b.scl);
+}
+
+LineCheck line_check(Bus bus) { return state(bus).lines; }
+
+const char* line_action_name(LineAction a) {
+    switch (a) {
+        case LineAction::kNotRun:   return "not checked";
+        case LineAction::kIdle:     return "idle, no clear";
+        case LineAction::kCleared:  return "SDA held low, cleared";
+        case LineAction::kSdaStuck: return "SDA held low, STILL LOW after clear";
+        case LineAction::kSclLow:   return "SCL held low, not clocked";
+    }
+    return "?";
+}
 
 esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz) {
     BusState& b = state(bus);
@@ -100,6 +153,7 @@ esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz) {
     b.sda = sda_gpio;
     b.scl = scl_gpio;
     b.hz = scl_hz;
+    b.lines = check_and_clear(sda_gpio, scl_gpio);
     const esp_err_t err = create_bus(b, static_cast<int>(bus));
     b.inited = (err == ESP_OK);
     return err;
