@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Franken-E58 M5</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem 1rem; color: #222; background: #fafafa; }
+  h1 { font-size: 1.6rem; }
+  code { background: #eee; padding: 0.1rem 0.3rem; }
+</style>
+</head>
+<body>
+<h1>Franken-E58 M5</h1>
+<p>Static page served from LittleFS by the ESP32-S3 access point.</p>
+<p>Firmware: <code id="version">loading...</code></p>
+<p>Built: <code id="built">-</code> &middot; ESP-IDF <code id="idf">-</code></p>
+<script>
+fetch('/version').then(r => r.json()).then(v => {
+  document.getElementById('version').textContent = v.project + ' ' + v.version;
+  document.getElementById('built').textContent = v.date + ' ' + v.time;
+  document.getElementById('idf').textContent = v.idf;
+}).catch(() => { document.getElementById('version').textContent = 'unavailable'; });
+</script>
+</body>
+</html>

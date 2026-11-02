@@ -28,3 +28,16 @@ CONFIG_ESP_TASK_WDT_EN=y
 # IRAM-safe peripheral control (the flight loop must survive cache stalls)
 CONFIG_I2C_ISR_IRAM_SAFE=y
 CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y
+
+# Wi-Fi (M5, blueprint section 4.9): IRAM optimisations
+CONFIG_ESP_WIFI_IRAM_OPT=y
+CONFIG_ESP_WIFI_RX_IRAM_OPT=y
+
+# No flash writes at runtime (M5): Wi-Fi config stays in RAM, PHY calibration is not stored
+# in NVS (full calibration at every boot), so NVS is never initialised
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
+
+# LittleFS reads through the cache-mapped partition instead of esp_flash_read(), which would
+# disable the cache on both cores for every read (M5)
+CONFIG_LITTLEFS_MMAP_PARTITION=y

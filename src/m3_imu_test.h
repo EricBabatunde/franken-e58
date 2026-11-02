@@ -7,13 +7,18 @@
 // (600 s, compiled-in DLPF_CFG and decimation). A Core 0 task prints the results.
 void m3_start();
 
-// Phase B only, for the M4 interference test (P5). Same tasks and output as Phase B.
+// Phase B only, for the M4 interference test (P5) and the M5 runs. Same tasks and output as
+// Phase B. The first call creates the tasks. A further call, made only after
+// m3_phase_b_result() has returned true, starts another run on the same tasks.
 struct M3PhaseBResult {
     double rate_hz;
     double iv_sd_us;       // notify-interval standard deviation
     double jitter_us;      // max deviation of the interval from its mean
     double burst_avg_us;
-    uint32_t wake_max_us;  // ISR-to-task wake-up maximum
+    uint32_t burst_max_us;
+    uint32_t wake_min_us;  // ISR-to-task wake-up minimum, average and maximum
+    double wake_avg_us;
+    uint32_t wake_max_us;
     uint32_t wakes;
     uint32_t reads;
     uint32_t missed;

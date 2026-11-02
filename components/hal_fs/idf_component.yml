@@ -1,0 +1,5 @@
+## IDF component manager manifest (M5). The exact pin is intentional: update only through the
+## M5 licence check (docs/THIRD_PARTY_LICENSES.md). Resolved into managed_components/ at the
+## first CMake configure (needs network once); the resolution is locked in dependencies.lock.
+dependencies:
+  joltwallet/littlefs: "==1.22.3"

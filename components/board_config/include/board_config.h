@@ -70,6 +70,17 @@ constexpr uint32_t kTofDiagScanMaxTimeouts = 3;        // scan stops after this 
 static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
               "inter-measurement period must exceed timing budget + 4 ms (UM2356 p.5)");
 
+// Wi-Fi access point (blueprint section 4.6). SSID and password live only in the git-ignored
+// components/comms/include/wifi_credentials.h.
+constexpr uint8_t kWifiChannel = 1;          // fixed: 1, 6 or 11
+constexpr uint8_t kWifiMaxStations = 1;
+
+// LittleFS: partition "storage" in partitions.csv (subtype spiffs, flagged readonly), mounted
+// read-only. HTTP files are sent in chunks of kHttpChunkBytes from one static buffer.
+constexpr const char* kFsPartitionLabel = "storage";
+constexpr const char* kFsBasePath = "/fs";
+constexpr uint32_t kHttpChunkBytes = 2048;
+
 }  // namespace board
 
 // Set to 0 once the LED GPIO is identified.
@@ -82,7 +93,7 @@ static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
 #define FE_M3_TEST 0
 
 // Set to 0 to skip the Module 4 bench test.
-#define FE_M4_TEST 1
+#define FE_M4_TEST 0
 
 // Module 4 phases to run: bit n runs Pn (n = 1 to 5). P0 (init and ID check) always runs.
 // 0x3E runs P1 to P5; 0x04 runs P2 only.
@@ -92,11 +103,14 @@ static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
 #error "FE_M4_PHASES: only bits 1 to 5 (P1 to P5) may be set"
 #endif
 
-#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST) > 1
-#error "FE_M2_TEST, FE_M3_TEST and FE_M4_TEST are mutually exclusive: enable only one"
+// Set to 0 to skip the Module 5 bench test (Wi-Fi AP, static pages, IMU under Wi-Fi).
+#define FE_M5_TEST 1
+
+#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST) > 1
+#error "FE_M2_TEST, FE_M3_TEST, FE_M4_TEST and FE_M5_TEST are mutually exclusive: enable only one"
 #endif
 
 // Bench-only IMU ISR instrumentation (raw-interval min/max, handler cycle count, runtime
 // notify-every-N). Off in flight builds, where the ISR is timestamp, count, notify only.
-// M4 needs it for the P5 interference test, which reruns M3 Phase B.
-#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST)
+// M4 (P5) and M5 (IMU under Wi-Fi) rerun M3 Phase B, so they need it too.
+#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST)

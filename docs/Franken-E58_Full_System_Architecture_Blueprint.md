@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.7. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.8. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -200,10 +200,10 @@ Each motor has an independent low-side switch:
 
 | Step | Estimate | Note |
 |---|---|---|
-| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it) |
+| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it). **Under Wi-Fi page-serving load (M5):** average 605 to 633 µs, maximum 767 µs (idle AP: 451 µs). The margin must be re-checked once the estimator, PID and mixer are measured (R5) |
 | Filters, attitude, PID, mixer | < 150 µs | ESP32-S3 at 240 MHz with single-precision FPU. **To be measured** |
 | MCPWM update plus telemetry enqueue | < 50 µs | **To be measured** |
-| ISR-to-task wake-up | 7 µs average, 13 µs maximum measured | M3, Wi-Fi off. M7 repeats it with Wi-Fi on |
+| ISR-to-task wake-up | 7 µs average, 13 µs maximum measured | M3, Wi-Fi off. M5, Wi-Fi on: 7.0/17 µs average/maximum with the AP idle, 7.9/22 µs under page-serving load. M7 repeats it with the full task layout |
 | **Margin** | **≥ 350 µs** | Target loop-period jitter p99.9 < 100 µs |
 
 ### 4.4 Signal Chain
@@ -269,6 +269,7 @@ $\sigma = \pm 1$ is set by the physical propeller spin directions (diagonal pair
   * Sends 50 Hz "latest state only" frames.
   * Page hidden or screen locked means sending stops, which triggers the failsafe.
   * A reconnect **never** auto-arms.
+* **HTTP:** static files from LittleFS (gzip), GET only, plus `GET /version`, which returns the firmware version as JSON (M5).
 * **UDP:** Python test harness and telemetry stream. A native UDP client is also the fallback control path if browser latency misses its target (§6.2, R3).
 
 **Control frame (little-endian, 14 bytes):**
@@ -327,6 +328,8 @@ Names are verified against the pinned IDF version during Module 1 (via `menuconf
 * `CONFIG_FREERTOS_HZ=1000`
 * `CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y`, `CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y`, `CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y`
 * `CONFIG_ESP_WIFI_IRAM_OPT=y`, `CONFIG_ESP_WIFI_RX_IRAM_OPT=y`
+* No runtime flash writes (M5): `CONFIG_ESP_WIFI_NVS_ENABLED=n`, `CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n` (full PHY calibration at every boot), NVS never initialised
+* `CONFIG_LITTLEFS_MMAP_PARTITION=y` (M5): LittleFS reads go through the cache-mapped partition, not `esp_flash_read()`
 * `CONFIG_I2C_ISR_IRAM_SAFE=y`, `CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y`, `CONFIG_MCPWM_ISR_IRAM_SAFE=y`, `CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y`
 * `CONFIG_COMPILER_OPTIMIZATION_PERF=y`, 240 MHz CPU (`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y`)
 * Flash mode **DIO at 80 MHz** (`CONFIG_ESPTOOLPY_FLASHMODE_DIO=y`): this board's flash chip is detected as generic and the bootloader cannot set its QIO enable bit
@@ -368,7 +371,7 @@ franken-e58/
 | M2 | Dual-bus I²C scan and soak, with bus-recovery routine | MPU at 0x68 and ToF at 0x29 detected. 10-minute soak at 400 kHz with zero NACKs or timeouts. Recovery tested |
 | M3 | MPU-6500 driver: config, `DLPF_CFG` as a compile-time constant (default 1: 184 Hz) plus ISR decimation factor, INT-driven read | `WHO_AM_I` = 0x70. INT rate 1000 ± 10 Hz at `DLPF_CFG` = 1 (sensor clock ±1 %). INT rate at `DLPF_CFG` = 0 measured (8000 ± 80 Hz expected if the gyro drives data-ready; the measurement decides, not a pass threshold). Loop $\Delta t$ from the interrupt timestamp. No missed samples in 10 min. Jitter measured |
 | M4 | VL53L1X driver in isolation, own bus | About 40 Hz ranging. Status codes handled. Checked against a tape measure at several distances |
-| M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted |
+| M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted. IMU under Wi-Fi (AP idle and under page-serving load): zero missed samples and I²C errors, interval sd < 2 µs, jitter < 20 µs, wake-up max < 50 µs. No runtime flash writes |
 | M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3) |
 | M7 | Task layout, core pinning, GPTimer watchdog, failsafe state machine | Gates low within the 150 ms rule when the link is pulled. Loop jitter p99.9 < 100 µs. Core 1 never touches Wi-Fi locks |
 
@@ -432,8 +435,8 @@ franken-e58/
 | R1 | Gyro vibration noise (MPU-6500: gyro noise 0.01 °/s/√Hz, mechanical drive 25 to 29 kHz; vibration sensitivity and lifecycle status are not stated in the datasheets) | Soft-mount, DLPF, accelerometer DLPF (§4.4) and notch filters. If the noise proves unfixable, move to a better IMU |
 | R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O4), and a lighter-draw pack |
 | R3 | Browser joystick latency | Measured in M6, with native UDP as the fallback control path |
-| R4 | Flash write stalls | No flash writes while armed (§4.2, rule 6) |
-| R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core |
+| R4 | Flash operation stalls: writes, erases and `esp_flash_read()` reads through the SPI flash API disable the cache on both cores | No flash writes while armed (§4.2, rule 6). LittleFS reads go through the cache-mapped partition (`CONFIG_LITTLEFS_MMAP_PARTITION`), so they do not use that API. M5 shows no Core 1 stall while serving pages (wake-up max 22 µs) |
+| R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core. **M5 finding:** under page-serving load the wake-up barely moves (max 22 µs against 13 µs), but the I²C burst read grows from 451 to 605–633 µs average (max 767 µs), most likely cache contention on Core 1 code that runs from flash. Measure again during the M6 latency tests. Candidate fixes in M7: the IMU read path in IRAM, a 32 KB instruction cache, and reading the accelerometer at a lower rate than the gyro. The I²C interrupt is already in IRAM (`CONFIG_I2C_ISR_IRAM_SAFE`) |
 | R6 | Accelerometer magnitude reads 1.068 g at rest (M3), so correction gated on \|a\| near 1 g would be weakened | Calibrate before relying on it: normalise by the measured at-rest norm, or a six-position calibration in Phase 3 or 4. Set the Mahony weighting relative to the calibrated norm |
 | R7 | ToF reports occasional valid ghost readings in open space | Altitude filter gates on status and innovation, and accepts a range step only after N consecutive consistent readings (Phase 5 step 3) |
 

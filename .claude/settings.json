@@ -8,14 +8,26 @@
       "Bash(tools/verify_sdkconfig.sh:*)",
       "Bash(git status)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(pio run -t buildfs)"
     ],
     "deny": [
       "Bash(pio run -t upload:*)",
       "Bash(pio run --target upload:*)",
       "Bash(pio device monitor:*)",
       "Bash(rm -rf:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(pio run -t uploadfs:*)",
+      "Bash(pio run --target uploadfs:*)",
+      "Bash(pio run -e esp32s3 -t upload:*)",
+      "Bash(pio run -e esp32s3 --target upload:*)",
+      "Bash(pio run -e esp32s3 -t uploadfs:*)",
+      "Bash(pio run -e esp32s3 --target uploadfs:*)",
+      "Bash(~/.platformio/penv/bin/pio run -t upload:*)",
+      "Bash(~/.platformio/penv/bin/pio run --target upload:*)",
+      "Bash(~/.platformio/penv/bin/pio run -t uploadfs:*)",
+      "Bash(~/.platformio/penv/bin/pio run --target uploadfs:*)",
+      "Bash(~/.platformio/penv/bin/pio device monitor:*)"
     ]
   }
 }

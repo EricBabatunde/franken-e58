@@ -5,3 +5,7 @@ sdkconfig.*
 .claude/settings.local.json
 docs/third_party/
 logs/
+components/comms/include/wifi_credentials.h
+managed_components/
+data/
+__pycache__/

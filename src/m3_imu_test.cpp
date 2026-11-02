@@ -2,7 +2,7 @@
 
 #include "board_config.h"
 
-#if FE_M3_TEST || FE_M4_TEST
+#if FE_M3_TEST || FE_M4_TEST || FE_M5_TEST
 
 #include <atomic>
 #include <cmath>
@@ -98,6 +98,7 @@ struct Snapshot {
     Stats window;
     bool summary_valid[kNumPhases] = {false, false, false};
     Stats summary[kNumPhases];
+    uint32_t b_run = 0;            // Phase-B-only mode: run number, increments at each run start
 };
 
 // ---- Seqlock slot (components/seqlock): Core 1 writes, Core 0 reads. No locks.
@@ -106,9 +107,15 @@ SeqlockSlot<Snapshot> s_slot;
 void publish(const Snapshot& s) { s_slot.write(s); }
 bool read_snapshot(Snapshot* out) { return s_slot.read(out); }
 
-// Phase-B-only mode for the M4 interference test (P5). Set before the tasks start.
+// Phase-B-only mode for the M4 interference test (P5) and the M5 IMU-under-Wi-Fi runs.
+// Set before the tasks start. Later runs (M5) hand the next duration to Core 1 through the
+// atomic pair below; the Core 1 task polls it between runs (its task notification belongs
+// to the data-ready ISR).
 bool s_b_only = false;
 uint32_t s_b_seconds = kBSeconds;
+bool s_b_tasks_started = false;                 // Core 0 only
+std::atomic<uint32_t> s_b_next_seconds{0};
+std::atomic<bool> s_b_next{false};
 
 // Phase B figures handed to the M4 test once the Phase B summary has been printed.
 M3PhaseBResult s_b_result{};
@@ -304,14 +311,23 @@ void imu_task(void*) {
     s_work.state = State::kRunning;
 
     if (s_b_only) {
-        if (!configure(3, static_cast<uint8_t>(board::kImuDlpfCfg))) {
-            park();
+        for (;;) {
+            s_work.b_run++;
+            s_work.summary_valid[kB] = false;
+            s_work.state = State::kRunning;
+            if (!configure(3, static_cast<uint8_t>(board::kImuDlpfCfg))) {
+                park();
+            }
+            run_phase(kB, s_b_seconds, board::kImuIsrDecimation, true);
+            drv_mpu6500::isr_set_notify_every(0);
+            s_work.state = State::kDone;
+            publish(s_work);
+            // Wait for another run request (M5 runs Phase B twice per boot).
+            while (!s_b_next.exchange(false, std::memory_order_acq_rel)) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            s_b_seconds = s_b_next_seconds.load(std::memory_order_relaxed);
         }
-        run_phase(kB, s_b_seconds, board::kImuIsrDecimation, true);
-        drv_mpu6500::isr_set_notify_every(0);
-        s_work.state = State::kDone;
-        publish(s_work);
-        park();
     }
 
     // Phase A1: raw pulses only, no reads (the status flag is never cleared by a read).
@@ -527,6 +543,9 @@ void print_summary_b(const Stats& s, uint32_t heap_start, uint32_t heap_end, uin
     out->iv_sd_us = sdev(s.iv_sum, s.iv_sumsq, s.iv_n);
     out->jitter_us = jitter;
     out->burst_avg_us = avg(s.burst_sum, s.reads);
+    out->burst_max_us = s.burst_max;
+    out->wake_min_us = u_min(s.lat_min);
+    out->wake_avg_us = avg(s.lat_sum, s.wakes);
     out->wake_max_us = s.lat_max;
     out->wakes = s.wakes;
     out->reads = s.reads;
@@ -541,6 +560,8 @@ void report_task(void*) {
     bool summary_printed[kNumPhases] = {false, false, false};
     bool failure_printed = false;
     bool lines_printed = false;
+    bool b_done_printed = false;
+    uint32_t last_b_run = 0;
     uint32_t last_window_seq = 0;
     bool heap_start_taken = false;
     uint32_t heap_start = 0;
@@ -615,10 +636,22 @@ void report_task(void*) {
             summary_printed[kB] = true;
         }
 
+        if (s_b_only && s.b_run != last_b_run) {  // a new Phase B run has started
+            last_b_run = s.b_run;
+            summary_printed[kB] = false;
+            heap_start_taken = false;
+            b_done_printed = false;
+            s_n_rates[kB] = 0;
+        }
         if (s.state == State::kDone && summary_printed[kB]) {
-            ESP_LOGI(TAG, "%s", s_b_only ? "M3 Phase B finished."
-                                         : "M3 bench test finished. Reset the board for a fresh run.");
-            vTaskDelete(nullptr);
+            if (!s_b_only) {
+                ESP_LOGI(TAG, "M3 bench test finished. Reset the board for a fresh run.");
+                vTaskDelete(nullptr);
+            }
+            if (!b_done_printed) {  // Phase-B-only: stay alive for a further run
+                ESP_LOGI(TAG, "M3 Phase B run %u finished.", u(s.b_run));
+                b_done_printed = true;
+            }
         }
         if (s.state == State::kFailed && failure_printed) {
             vTaskDelete(nullptr);
@@ -637,6 +670,14 @@ void m3_start() {
 }
 
 void m3_phase_b_start(uint32_t seconds) {
+    s_b_result_ready.store(false, std::memory_order_release);
+    if (s_b_tasks_started) {  // a further run: the tasks exist and wait for the request
+        ESP_LOGI(TAG, "M3 Phase B only, next run: %us", u(seconds));
+        s_b_next_seconds.store(seconds, std::memory_order_relaxed);
+        s_b_next.store(true, std::memory_order_release);
+        return;
+    }
+    s_b_tasks_started = true;
     s_b_only = true;
     s_b_seconds = seconds;
     ESP_LOGI(TAG, "M3 Phase B only: %us at DLPF_CFG %d, decimation %d", u(seconds),
@@ -654,4 +695,4 @@ bool m3_phase_b_result(M3PhaseBResult* out) {
     return true;
 }
 
-#endif  // FE_M3_TEST || FE_M4_TEST
+#endif  // FE_M3_TEST || FE_M4_TEST || FE_M5_TEST

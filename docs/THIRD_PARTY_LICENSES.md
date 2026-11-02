@@ -81,6 +81,66 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 COPYRIGHT(c) 2018 STMicroelectronics
 ```
 
+## esp_littlefs (joltwallet/littlefs) and the littlefs core (M5)
+
+| Item | Value |
+|---|---|
+| Project | esp_littlefs, https://github.com/joltwallet/esp_littlefs, from the ESP-IDF component registry as `joltwallet/littlefs` |
+| Version used | `==1.22.3`, source commit `bde79e13be971a1f06d5e5f55e6f3e8568fa32b5`, component hash `3af20a3d…` (`dependencies.lock`) |
+| Bundled core | littlefs v2.11 (`LFS_VERSION 0x0002000b`, disk format v2.1), `src/littlefs/` |
+| How it is used | Pinned managed component, declared in `components/hal_fs/idf_component.yml`, downloaded into `managed_components/` (git-ignored) at the first CMake configure. Not modified |
+| Licences | esp_littlefs wrapper: MIT. littlefs core: BSD 3-Clause |
+| Used by | `components/hal_fs` (Module 5) |
+
+**Licence check (M5).**
+- The registry labels versions from 1.22.3 on as "Custom". The `license.txt` it serves for 1.22.2 and 1.23.1 is byte-identical MIT text, and the `LICENSE` in the downloaded 1.22.3 is the same MIT text.
+- The littlefs core keeps its own BSD 3-Clause `LICENSE.md` inside the component.
+- Checked against the downloaded 1.22.3 component on 31 October 2026.
+
+**esp_littlefs licence (MIT):**
+
+```
+Copyright 2020 Brian Pugh
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+**littlefs licence (BSD 3-Clause):**
+
+```
+Copyright (c) 2022, The littlefs authors.  
+Copyright (c) 2017, Arm Limited. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+-  Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+-  Redistributions in binary form must reproduce the above copyright notice, this
+   list of conditions and the following disclaimer in the documentation and/or
+   other materials provided with the distribution.
+-  Neither the name of ARM nor the names of its contributors may be used to
+   endorse or promote products derived from this software without specific prior
+   written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+**Obligations for these two:** keep both notices with the source (the component carries them unchanged) and reproduce both in the documentation of any binary release (this file). The littlefs condition 3 names ARM: do not use it to endorse the project.
+
 **Obligations for this project:**
 - Keep the notices and licence text above in every derived source file (condition 1).
 - Ship this file, or its contents, with any binary release (condition 2).
