@@ -14,7 +14,6 @@
 #include "m3_imu_test.h"
 #include "m4_tof_test.h"
 #include "m5_wifi_test.h"
-#include "m6_latency_test.h"
 
 static const char* TAG = "main";
 
@@ -69,10 +68,6 @@ extern "C" void app_main(void) {
 
 #if FE_M5_TEST
     m5_start();
-#endif
-
-#if FE_M6_TEST
-    m6_start();
 #endif
 
     // 4. Heartbeat: 1 Hz, microsecond timestamp from the 64-bit esp_timer.

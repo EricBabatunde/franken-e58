@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.8. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.9. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -177,7 +177,7 @@ Each motor has an independent low-side switch:
 | telemetry_task     (ring-buffer drain)|      |   4. Angle P loop -> rate PID loop    |
 |                                      |       |   5. Mixer, battery comp, MCPWM write |
 |     lock-free hand-off (SPSC / seqlock)      |   6. Heartbeat + telemetry enqueue    |
-|        setpoints ----------------------------> setpoint slot (atomic, timestamped)   |
+|        setpoints ----------------------------> setpoint slots (seqlock, per transport)|
 |        <---------------------- telemetry ring (internal SRAM)                        |
 |        <---------------------- ToF slot (seqlock)                                    |
 +--------------------------------------+       +---------------------------------------+
@@ -193,14 +193,14 @@ Each motor has an independent low-side switch:
 5. **No PSRAM** for flight data or code. Control code is in IRAM or internal flash cache and control data in internal DRAM.
 6. **No flash writes (LittleFS, NVS) while armed.** Flash operations disable the cache and can stall IRAM-unsafe code. Firmware write paths refuse to run in the `ARMED` state.
 7. **Yield properly.** `flight_task` blocks on its notification each cycle, so IDLE1 runs and the task watchdog stays satisfied.
-8. **Hand-offs are lock-free.** SPSC ring for telemetry, atomic timestamped slot for setpoints, seqlock slot for ToF. Never share a user-level mutex, semaphore or queue with Core 0. The FreeRTOS kernel spinlock taken by task notifications is unavoidable; its effect on wake-up latency is measured in M3 (Wi-Fi off) and M7 (Wi-Fi on).
+8. **Hand-offs are lock-free.** SPSC ring for telemetry, seqlock slot for ToF, and for setpoints **one seqlock slot per transport** (UDP task, httpd task), because a seqlock has a single writer: each record carries its receive time (`esp_timer_get_time()`) and a check word, and Core 1 uses the newer of the two (M6). Each Core 0 writer wraps its slot write in a short Core 0 critical section (interrupts off for the copy, about a microsecond, nothing shared with Core 1), so a preempted writer cannot leave the slot mid-write: M6 saw 3 to 6 Core 1 reads per run give up after 8 tries without it, never with a torn record. Never share a user-level mutex, semaphore or queue with Core 0. The FreeRTOS kernel spinlock taken by task notifications is unavoidable; its effect on wake-up latency is measured in M3 (Wi-Fi off) and M7 (Wi-Fi on).
 9. **No I2C bus recovery in the flight loop.** A stalled IMU is handled by the missing-data-ready cut trigger (§4.8). Bus recovery by tear-down and rebuild allocates memory, so it is allowed only while DISARMED, never from the flight loop. Investigate `i2c_master_bus_reset()` in M3 as an allocation-free option. Investigated in M3 (ESP-IDF 5.5.3): allocation-free; takes the shared periph_spinlock briefly; on the ESP32-S3 the driver does not wait for the 9-pulse bus clear to finish, so the clear may be cut short; callable only by the task that owns the bus, between transfers. Usable for recovery while DISARMED only.
 
 ### 4.3 Timing Budget (1 kHz, 1000 µs frame)
 
 | Step | Estimate | Note |
 |---|---|---|
-| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it). **Under Wi-Fi page-serving load (M5):** average 605 to 633 µs, maximum 767 µs (idle AP: 451 µs). The margin must be re-checked once the estimator, PID and mixer are measured (R5) |
+| I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it). **Under Wi-Fi page-serving load (M5):** average 605 to 633 µs, maximum 767 µs (idle AP: 451 µs). **Under latency traffic (M6, 100 frames/s):** UDP 470 to 480 µs, WebSocket 514 to 534 µs average, maximum 778 µs; the M6 setpoint read on Core 1 (from flash) cost 3 µs idle, 8 µs under UDP and 22 µs under WebSocket on average, 97 µs maximum. The margin must be re-checked once the estimator, PID and mixer are measured (R5) |
 | Filters, attitude, PID, mixer | < 150 µs | ESP32-S3 at 240 MHz with single-precision FPU. **To be measured** |
 | MCPWM update plus telemetry enqueue | < 50 µs | **To be measured** |
 | ISR-to-task wake-up | 7 µs average, 13 µs maximum measured | M3, Wi-Fi off. M5, Wi-Fi on: 7.0/17 µs average/maximum with the AP idle, 7.9/22 µs under page-serving load. M7 repeats it with the full task layout |
@@ -264,13 +264,16 @@ $\sigma = \pm 1$ is set by the physical propeller spin directions (diagonal pair
 
 ### 4.6 Communications
 
-* **Wi-Fi AP:** fixed channel (1, 6 or 11), WPA2, **one station maximum**, HT20, `WIFI_PS_NONE` (power-save off), `TCP_NODELAY` on sockets. Wi-Fi IRAM optimisations enabled.
+* **Wi-Fi AP:** fixed channel (1, 6 or 11), WPA2, **one station maximum**, HT20, `WIFI_PS_NONE` (power-save off), `TCP_NODELAY` on sockets. Wi-Fi IRAM optimisations enabled. Beacon interval 100 TU and `dtim_period = 1`, both set explicitly (a zeroed `wifi_ap_config_t` holds DTIM 0; IDF default 1, verify against IDF docs; set from M7).
+* **Ground station (laptop):** runs with Wi-Fi power save off and with background scanning sources (location services, an open Wi-Fi settings panel or menu) off. A scan takes the client off channel for about 1 s (about 4 s for a full scan): M6 measured 50 to 90 ms latency bursts every 15 s and setpoint ages up to 162 ms, past the 150 ms link-silence cut.
 * **Joystick UI:** nippleJS served from LittleFS (gzip). Browsers cannot open UDP sockets, so the UI talks **WebSocket** (`/ws`). Left control is a **latching throttle slider** (a self-centring joystick is wrong for throttle). Right is a pitch/roll joystick. Yaw is a slider. Always-visible **ARM** and **KILL** buttons.
   * Sends 50 Hz "latest state only" frames.
   * Page hidden or screen locked means sending stops, which triggers the failsafe.
+  * No screen wake lock: browsers offer `navigator.wakeLock` only in a secure context (HTTPS or localhost), not on plain `http://192.168.4.1`. The user sets a long screen timeout.
   * A reconnect **never** auto-arms.
 * **HTTP:** static files from LittleFS (gzip), GET only, plus `GET /version`, which returns the firmware version as JSON (M5).
-* **UDP:** Python test harness and telemetry stream. A native UDP client is also the fallback control path if browser latency misses its target (§6.2, R3).
+* **WebSocket `/ws`:** binary, final, 14-byte frames only; any other frame, or one that fails validation, closes the session. A plain GET without the upgrade is answered 400. The handler runs in the httpd task on Core 0 and needs `CONFIG_HTTPD_WS_SUPPORT=y`.
+* **UDP:** port **5858**. Python test harness and telemetry stream. A native UDP client is also the fallback control path if browser latency misses its target (§6.2, R3); M6 showed it is not needed.
 
 **Control frame (little-endian, 14 bytes):**
 
@@ -284,9 +287,11 @@ $\sigma = \pm 1$ is set by the physical propeller spin directions (diagonal pair
 | 8 | yaw | i16 | −1000 to +1000 |
 | 10 | throttle | u16 | 0 to 1000 |
 | 12 | flags | u8 | bit0 arm, bit1 kill, bit2 angle mode |
-| 13 | crc8 | u8 | Over bytes 0 to 12 |
+| 13 | crc8 | u8 | Over bytes 0 to 12. CRC-8 polynomial 0x07, init 0x00, no reflection, no final XOR (CRC-8/SMBUS; check value 0xF4 for `"123456789"`). Known-answer vectors: `components/comms/test_vectors/control_frame_vectors.txt`, shared by firmware, host test, Python and the page |
 
-**Latency target (Phase 1, Module 6):** one-way (RTT/2) p95 < 15 ms and p99 < 20 ms over at least 10 000 packets at 50 Hz, measured for both WebSocket and UDP.
+**Ping and pong:** a pong (type 3) echoes the ping's seq, roll, pitch, yaw and flags; its throttle field carries the device turnaround in µs (receive to send, saturating at 65535), so RTT splits into device and network time. Pings never touch the setpoint.
+
+**Latency target (Phase 1, Module 6):** one-way (RTT/2) p95 < 15 ms and p99 < 20 ms over at least 10 000 packets at 50 Hz, measured for both WebSocket and UDP. **M6 result (3 November 2026, ping plus control frame at 50 Hz each):** laptop UDP p95/p99 2.00/2.59 ms, no loss; laptop WebSocket 3.86/5.26 ms, no loss; phone browser WebSocket 4.90/8.25 ms, 0.32 % lost, all in one 1 s phone-side Wi-Fi stall (a 324 ms setpoint gap on the device, which would trip the 150 ms cut).
 
 ### 4.7 Telemetry & Logging
 
@@ -330,6 +335,7 @@ Names are verified against the pinned IDF version during Module 1 (via `menuconf
 * `CONFIG_ESP_WIFI_IRAM_OPT=y`, `CONFIG_ESP_WIFI_RX_IRAM_OPT=y`
 * No runtime flash writes (M5): `CONFIG_ESP_WIFI_NVS_ENABLED=n`, `CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n` (full PHY calibration at every boot), NVS never initialised
 * `CONFIG_LITTLEFS_MMAP_PARTITION=y` (M5): LittleFS reads go through the cache-mapped partition, not `esp_flash_read()`
+* `CONFIG_HTTPD_WS_SUPPORT=y` (M6): WebSocket support in `esp_http_server` for `/ws`; costs about 6.3 KB of flash and no RAM
 * `CONFIG_I2C_ISR_IRAM_SAFE=y`, `CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y`, `CONFIG_MCPWM_ISR_IRAM_SAFE=y`, `CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y`
 * `CONFIG_COMPILER_OPTIMIZATION_PERF=y`, 240 MHz CPU (`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y`)
 * Flash mode **DIO at 80 MHz** (`CONFIG_ESPTOOLPY_FLASHMODE_DIO=y`): this board's flash chip is detected as generic and the bootloader cannot set its QIO enable bit
@@ -372,7 +378,7 @@ franken-e58/
 | M3 | MPU-6500 driver: config, `DLPF_CFG` as a compile-time constant (default 1: 184 Hz) plus ISR decimation factor, INT-driven read | `WHO_AM_I` = 0x70. INT rate 1000 ± 10 Hz at `DLPF_CFG` = 1 (sensor clock ±1 %). INT rate at `DLPF_CFG` = 0 measured (8000 ± 80 Hz expected if the gyro drives data-ready; the measurement decides, not a pass threshold). Loop $\Delta t$ from the interrupt timestamp. No missed samples in 10 min. Jitter measured |
 | M4 | VL53L1X driver in isolation, own bus | About 40 Hz ranging. Status codes handled. Checked against a tape measure at several distances |
 | M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted. IMU under Wi-Fi (AP idle and under page-serving load): zero missed samples and I²C errors, interval sd < 2 µs, jitter < 20 µs, wake-up max < 50 µs. No runtime flash writes |
-| M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3) |
+| M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3). IMU loop alongside: zero missed samples and I²C errors, interval sd < 2 µs, jitter < 20 µs, wake-up max < 50 µs. Setpoint hand-off: no torn record reaches Core 1. Heap within 2 KB of idle after more than 10 000 frames per transport. **Passed 3 November 2026** |
 | M7 | Task layout, core pinning, GPTimer watchdog, failsafe state machine | Gates low within the 150 ms rule when the link is pulled. Loop jitter p99.9 < 100 µs. Core 1 never touches Wi-Fi locks |
 
 ### Phase 2: Schematic Capture & PCB Design
@@ -433,10 +439,10 @@ franken-e58/
 | ID | Risk | Mitigation |
 |---|---|---|
 | R1 | Gyro vibration noise (MPU-6500: gyro noise 0.01 °/s/√Hz, mechanical drive 25 to 29 kHz; vibration sensitivity and lifecycle status are not stated in the datasheets) | Soft-mount, DLPF, accelerometer DLPF (§4.4) and notch filters. If the noise proves unfixable, move to a better IMU |
-| R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O4), and a lighter-draw pack |
-| R3 | Browser joystick latency | Measured in M6, with native UDP as the fallback control path |
+| R2 | 1S sag collapsing the logic rail | Ceramic capacitors at the regulator, bulk capacitor, VBAT cutoff, brownout detector (O4), and a lighter-draw pack. **Seen on the breadboard (M6, USB power):** the brownout detector reset the board at Wi-Fi start-up (8 times in one session) and once mid-run under WebSocket traffic. The two later runs that day had none; the cause was not isolated. Wi-Fi transmit bursts alone can pull the rail down, so the supply must be sound before M7's Wi-Fi tests |
+| R3 | Browser joystick latency | **Closed by M6:** the phone-browser WebSocket meets the target (p95 4.90 ms, p99 8.25 ms), so it stays the UI control path and UDP serves the tools. Residual: phone-side Wi-Fi stalls (one of about 1 s in 200 s) trip the 150 ms cut; M7's failsafe treats them as link loss |
 | R4 | Flash operation stalls: writes, erases and `esp_flash_read()` reads through the SPI flash API disable the cache on both cores | No flash writes while armed (§4.2, rule 6). LittleFS reads go through the cache-mapped partition (`CONFIG_LITTLEFS_MMAP_PARTITION`), so they do not use that API. M5 shows no Core 1 stall while serving pages (wake-up max 22 µs) |
-| R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core. **M5 finding:** under page-serving load the wake-up barely moves (max 22 µs against 13 µs), but the I²C burst read grows from 451 to 605–633 µs average (max 767 µs), most likely cache contention on Core 1 code that runs from flash. Measure again during the M6 latency tests. Candidate fixes in M7: the IMU read path in IRAM, a 32 KB instruction cache, and reading the accelerometer at a lower rate than the gyro. The I²C interrupt is already in IRAM (`CONFIG_I2C_ISR_IRAM_SAFE`) |
+| R5 | Kernel spinlock contention delaying ISR-to-task wake-up under Wi-Fi load | Measured in M3 and M7. Fallback: a Core 1 task that waits on an atomic flag set by the ISR instead of a FreeRTOS notification, at the cost of a busy core. **M5 finding:** under page-serving load the wake-up barely moves (max 22 µs against 13 µs), but the I²C burst read grows from 451 to 605–633 µs average (max 767 µs), most likely cache contention on Core 1 code that runs from flash. **M6 finding:** the burst average rises to 470–480 µs under UDP and 514–534 µs under WebSocket traffic, and the flash-resident setpoint read on Core 1 costs 3 µs idle against 22 µs under WebSocket (97 µs maximum): Core 0's larger code footprint under WebSocket (httpd, TCP) evicting Core 1 code from the shared 16 KB instruction cache fits both. Wake-up stays at 19 µs maximum. Candidate fixes in M7, the setpoint read included: the IMU read path in IRAM, a 32 KB instruction cache, and reading the accelerometer at a lower rate than the gyro. The I²C interrupt is already in IRAM (`CONFIG_I2C_ISR_IRAM_SAFE`) |
 | R6 | Accelerometer magnitude reads 1.068 g at rest (M3), so correction gated on \|a\| near 1 g would be weakened | Calibrate before relying on it: normalise by the measured at-rest norm, or a six-position calibration in Phase 3 or 4. Set the Mahony weighting relative to the calibrated norm |
 | R7 | ToF reports occasional valid ghost readings in open space | Altitude filter gates on status and innovation, and accepts a range step only after N consecutive consistent readings (Phase 5 step 3) |
 
@@ -448,7 +454,7 @@ franken-e58/
 | Ground-up firmware, ESP-Drone as reference only | Keeps the build modular and testable. ESP-Drone is a pure ESP-IDF project, so it reads directly as a reference |
 | Two I²C buses | A ToF transaction cannot delay an IMU read |
 | 1 kHz loop, INT-driven sampling | Sensor-synchronised loop; $\Delta t$ measured from the interrupt timestamp |
-| WebSocket for the browser, UDP for tools | Browsers cannot send UDP |
+| WebSocket for the browser, UDP for tools | Browsers cannot send UDP. Confirmed by M6: both transports meet the latency target, the phone browser included |
 | Mahony attitude plus a 3-state altitude Kalman filter | Linear altitude model, so an extended filter is unnecessary. Cheaper at 1 kHz |
 | Ceramic-only regulator capacitors | Tantalum inrush failure risk on a battery-connected rail |
 | Console on UART0 plus native USB Serial/JTAG | Both sockets confirmed in M1, with identical log output on either |

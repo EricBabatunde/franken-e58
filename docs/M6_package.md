@@ -4,7 +4,7 @@
 
 Blueprint sections used: §4.2, §4.6 (control frame, latency target), §4.8, Phase 1 M6, risks R3 and R5.
 
-**Status:** M6 passed (bench run 2, 3 November 2026, §10): acceptance 1 to 8 pass; decision 9: WebSocket stays the UI control path, UDP for tools. Run 1 (§9) was spoilt by laptop Wi-Fi scans and a page measurement artefact, both fixed before run 2.
+**Status:** M6 passed (bench run 2, 3 November 2026, §10): acceptance 1 to 8 pass; decision 9: WebSocket stays the UI control path, UDP for tools. Run 1 (§9) was spoilt by laptop Wi-Fi scans and a page measurement artefact, both fixed before run 2. Closed out: blueprint revision 2.9 applies B-M6-01 to 12; the bench test `src/m6_latency_test.*` is deleted (kept in the git history, commit `fe21ec9`).
 
 ---
 
@@ -104,7 +104,7 @@ The option costs flash only. Runtime heap: the WebSocket state lives in httpd's 
 - At 100 frames/s, six slots hold 60 ms of traffic; `udp_rx` (priority 5) would have to be starved that long by higher-priority Core 0 work (wifi 23, tiT 18) for a drop.
 - **What the counters would show:** a drop never reaches `recvfrom`, so no firmware error counter moves. It appears as client loss with the firmware's `udp rx` lower than the frames the client sent (pings + controls). An invalid frame, by contrast, moves an error counter.
 
-## 6. Proposed blueprint diffs (not applied; revision 2.9 when approved)
+## 6. Blueprint diffs (applied in revision 2.9, 3 November 2026)
 
 | ID | Section | Old | New | Reason |
 |---|---|---|---|---|
@@ -189,7 +189,7 @@ Findings:
 components/comms/   include/control_frame.h, control_frame.cpp, include/link.h, link.cpp,
                     include/setpoint.h, include/udp_server.h, udp_server.cpp,
                     include/ws_server.h, ws_server.cpp, test_vectors/control_frame_vectors.txt
-src/m6_latency_test.h, src/m6_latency_test.cpp   (bench test, deleted before Module 7)
+src/m6_latency_test.h, src/m6_latency_test.cpp   (bench test, deleted at the close-out; in commit fe21ec9)
 web/latency.html
 tools/control_frame.py, tools/latency_test.py, tools/analyse_m6.py, tools/requirements-m6.txt,
 tools/host_test/test_control_frame.cpp

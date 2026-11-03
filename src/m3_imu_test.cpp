@@ -2,7 +2,7 @@
 
 #include "board_config.h"
 
-#if FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M6_TEST
+#if FE_M3_TEST || FE_M4_TEST || FE_M5_TEST
 
 #include <atomic>
 #include <cmath>
@@ -707,4 +707,4 @@ bool m3_phase_b_result(M3PhaseBResult* out) {
     return true;
 }
 
-#endif  // FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M6_TEST
+#endif  // FE_M3_TEST || FE_M4_TEST || FE_M5_TEST
