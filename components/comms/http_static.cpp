@@ -69,10 +69,6 @@ esp_err_t on_file(httpd_req_t* req) {
         s_bad_request.fetch_add(1, std::memory_order_relaxed);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad path");
     }
-    if (n == 3 && std::strncmp(uri, "/ws", 3) == 0) {  // reserved for M6
-        return not_found(req);
-    }
-
     char rel[kMaxPath + 1];
     std::memcpy(rel, uri, n);
     rel[n] = '\0';
@@ -123,7 +119,7 @@ esp_err_t on_open(httpd_handle_t, int sockfd) {
 
 }  // namespace
 
-esp_err_t start() {
+esp_err_t start(const httpd_uri_t* extra) {
     if (s_server != nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -135,7 +131,7 @@ esp_err_t start() {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.core_id = 0;  // Core 0 (blueprint section 4.2); the default is tskNO_AFFINITY
     cfg.stack_size = 6144;
-    cfg.max_uri_handlers = 4;
+    cfg.max_uri_handlers = 4;  // "/version", the optional extra ("/ws" in M6), "/*"
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     cfg.open_fn = on_open;
@@ -143,10 +139,21 @@ esp_err_t start() {
     if (e != ESP_OK) {
         return e;
     }
-    // Registration order matters: "/version" before the "/*" wildcard.
-    static const httpd_uri_t version = {"/version", HTTP_GET, on_version, nullptr};
-    static const httpd_uri_t files = {"/*", HTTP_GET, on_file, nullptr};
+    // Registration order matters: "/version" and the extra handler before the "/*" wildcard.
+    // Field by field: with CONFIG_HTTPD_WS_SUPPORT the struct has more members (zeroed here).
+    // httpd_register_uri_handler() copies the struct.
+    httpd_uri_t version = {};
+    version.uri = "/version";
+    version.method = HTTP_GET;
+    version.handler = on_version;
+    httpd_uri_t files = {};
+    files.uri = "/*";
+    files.method = HTTP_GET;
+    files.handler = on_file;
     e = httpd_register_uri_handler(s_server, &version);
+    if (e == ESP_OK && extra != nullptr) {
+        e = httpd_register_uri_handler(s_server, extra);
+    }
     if (e == ESP_OK) {
         e = httpd_register_uri_handler(s_server, &files);
     }

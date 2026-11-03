@@ -1,0 +1,38 @@
+# Known-answer vectors for the M6 control frame (blueprint section 4.6, docs/M6_package.md D-M6-02).
+# Shared by the firmware self-test (embedded), the host unit test (tools/host_test),
+# tools/control_frame.py and web/latency.html. Hex is the bytes on the wire.
+#   crc   <hex bytes> <expected crc8>
+#   frame <hex bytes> <verdict: ok|length|magic|crc|type> [type seq roll pitch yaw throttle flags]
+#   pong  <hex ping frame> <turnaround us> <hex expected pong>
+# CRC-8/SMBUS: poly 0x07, init 0x00, no reflection, no final XOR. Check value from the CRC catalogue:
+crc 313233343536373839 0xF4  # "123456789"
+crc - 0x00
+crc 00 0x00
+crc FF 0xF3
+crc E5 0xB5
+crc 00000000000000000000000000 0x00
+crc FFFFFFFFFFFFFFFFFFFFFFFFFF 0xA3
+# Valid frames
+frame E501000000000000000000000063 ok 1 0 0 0 0 0 0
+frame E5010100E80318FC0000E80300E6 ok 1 1 1000 -1000 0 1000 0
+frame E501FFFF0080FF7FFFFFFFFFFFD2 ok 1 65535 -32768 32767 -1 65535 255
+frame E5022A003412FEFF03000000045F ok 2 42 4660 -2 3 0 4
+frame E503018018FCE80318FCB1000159 ok 3 32769 -1000 1000 -1000 177 1
+frame E50102010403060508070A090BD2 ok 1 258 772 1286 1800 2314 11
+# Rejected frames (checked in the order length, magic, crc, type)
+frame - length
+frame E50107000A00F6FF0000F40100 length
+frame E50107000A00F6FF0000F401000100 length
+frame 0000000000000000000000000000 magic  # all zero
+frame E40107000A00F6FF0000F4010001 magic
+frame E50107000A00F6FF0000F4010000 crc  # CRC bit flipped
+frame E50107000A80F6FF0000F4010001 crc  # payload bit flipped
+frame E50007000A00F6FF0000F401005C type  # type 0, valid CRC
+frame E50407000A00F6FF0000F401002F type  # type 4, valid CRC
+frame E5FF07000A00F6FF0000F401001B type  # type 255, valid CRC
+frame E50907000A00F6FF0000F4010018 crc  # bad type and bad CRC: CRC is checked first
+# Pongs: seq, roll, pitch, yaw and flags echoed, throttle = turnaround (saturates at 65535)
+pong E5022A003412FEFF0300E70304B8 0 E5032A003412FEFF030000000402
+pong E5022A003412FEFF0300E70304B8 123 E5032A003412FEFF03007B000489
+pong E5022A003412FEFF0300E70304B8 65535 E5032A003412FEFF0300FFFF04FE
+pong E5022A003412FEFF0300E70304B8 70000 E5032A003412FEFF0300FFFF04FE

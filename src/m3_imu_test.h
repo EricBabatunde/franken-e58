@@ -27,3 +27,10 @@ struct M3PhaseBResult {
 };
 void m3_phase_b_start(uint32_t seconds);
 bool m3_phase_b_result(M3PhaseBResult* out);  // true once the Phase B summary has been printed
+
+// M6: a function called on Core 1 after every successful Phase B read, with the number of the
+// 10 s window the sample belongs to (the same number as the "B wNN" line). It runs inside the
+// flight-style loop, so it must not log, allocate or take a lock shared with Core 0. Set it
+// before m3_phase_b_start(); null (the default) disables it.
+using M3SampleHook = void (*)(uint32_t window);
+void m3_set_sample_hook(M3SampleHook hook);

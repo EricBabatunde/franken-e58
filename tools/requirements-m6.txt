@@ -1,0 +1,5 @@
+# M6 client tools (tools/latency_test.py). Install into the git-ignored .venv:
+#   uv venv .venv && uv pip install --python .venv/bin/python -r tools/requirements-m6.txt
+websockets==17.4
+numpy==2.5.4
+matplotlib==3.11.2

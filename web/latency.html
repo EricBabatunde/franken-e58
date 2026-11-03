@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Franken-E58 M6 latency</title>
+<style>
+  :root { --bg: #fff; --fg: #111; --muted: #666; --ok: #1a7f37; --bad: #c62828; --warn: #b26a00; --box: #f2f2f2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121212; --fg: #eee; --muted: #aaa; --ok: #4caf50; --bad: #ef5350; --warn: #ffb74d; --box: #1e1e1e; }
+  }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 40rem; padding: 12px 16px; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; }
+  .muted { color: var(--muted); font-size: 0.85rem; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  button { font-size: 1rem; padding: 10px 16px; border-radius: 6px; border: 1px solid var(--muted); background: var(--box); color: var(--fg); }
+  input { font-size: 1rem; width: 7rem; padding: 8px; }
+  #state { font-weight: 600; padding: 8px; border-radius: 6px; background: var(--box); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--box); } td:last-child { text-align: right; }
+  pre { background: var(--box); padding: 8px; font-size: 0.75rem; overflow-x: auto; }
+</style>
+</head>
+<body>
+<h1>Franken-E58 M6: WebSocket latency</h1>
+<div class="muted">Ping + control frames at 50 Hz each over /ws. One-way = RTT/2. Targets: p95 &lt; 15 ms, p99 &lt; 20 ms.</div>
+<div class="row">
+  <label>Pings <input id="count" type="number" min="100" step="100" value="10000"></label>
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+  <button id="dl" disabled>Download JSON</button>
+</div>
+<div id="state">Idle</div>
+<div class="muted" id="vectors">Checking the frame vectors...</div>
+<div class="muted" id="wake"></div>
+<table>
+  <tr><td>Pings sent / pongs</td><td id="sent">0 / 0</td></tr>
+  <tr><td>Lost (incl. later than 200 ms)</td><td id="lost">0</td></tr>
+  <tr><td>Out of order</td><td id="ooo">0</td></tr>
+  <tr><td>One-way p50 / p95 / p99 / max</td><td id="pct">-</td></tr>
+  <tr><td>Device turnaround mean / max</td><td id="ta">-</td></tr>
+  <tr><td>Timer lateness mean / max</td><td id="late">-</td></tr>
+</table>
+<pre id="hist"></pre>
+<script>
+"use strict";
+// Control frame (blueprint 4.6): 14 bytes LE. CRC-8 poly 0x07, init 0, no reflection, no XOR.
+const MAGIC = 0xE5, CONTROL = 1, PING = 2, PONG = 3;
+const MARK = { roll: 0x1234, pitch: -0x1234, yaw: 0x0E58, flags: 4 };   // echoed by every pong
+const PERIOD_MS = 20, TIMEOUT_MS = 200;
+// Live figures come from running sums and a fixed histogram, so a refresh costs the same at
+// ping 10 and ping 10 000 (an O(n log n) refresh stalled the phone's main thread by up to 60 ms
+// late in the run and inflated the measured RTT). Exact percentiles are computed once, at the end.
+const BIN_MS = 0.05, BINS = Math.ceil(TIMEOUT_MS / 2 / BIN_MS) + 1;   // one-way 0..100 ms
+const CRC_TABLE = new Uint8Array(256);
+for (let i = 0; i < 256; i++) { let c = i; for (let b = 0; b < 8; b++) c = c & 0x80 ? ((c << 1) ^ 0x07) & 0xFF : (c << 1) & 0xFF; CRC_TABLE[i] = c; }
+const crc8 = (u8) => { let c = 0; for (const b of u8) c = CRC_TABLE[c ^ b]; return c; };
+function encode(type, seq, roll = 0, pitch = 0, yaw = 0, throttle = 0, flags = 0) {
+  const b = new ArrayBuffer(14), v = new DataView(b);
+  v.setUint8(0, MAGIC); v.setUint8(1, type); v.setUint16(2, seq & 0xFFFF, true);
+  v.setInt16(4, roll, true); v.setInt16(6, pitch, true); v.setInt16(8, yaw, true);
+  v.setUint16(10, throttle, true); v.setUint8(12, flags);
+  v.setUint8(13, crc8(new Uint8Array(b, 0, 13)));
+  return new Uint8Array(b);
+}
+function decode(u8) {
+  if (u8.length !== 14) return ["length"];
+  if (u8[0] !== MAGIC) return ["magic"];
+  if (crc8(u8.subarray(0, 13)) !== u8[13]) return ["crc"];
+  if (u8[1] < 1 || u8[1] > 3) return ["type"];
+  const v = new DataView(u8.buffer, u8.byteOffset, 14);
+  return ["ok", { type: u8[1], seq: v.getUint16(2, true), roll: v.getInt16(4, true), pitch: v.getInt16(6, true),
+                  yaw: v.getInt16(8, true), throttle: v.getUint16(10, true), flags: u8[12] }];
+}
+const hex = (s) => s === "-" ? new Uint8Array(0) : new Uint8Array(s.match(/../g).map((x) => parseInt(x, 16)));
+const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+// Known-answer vectors, shared with the firmware and the Python tools.
+async function checkVectors() {
+  const el = document.getElementById("vectors");
+  try {
+    const text = await (await fetch("/control_frame_vectors.txt", { cache: "no-store" })).text();
+    let n = 0, bad = 0;
+    for (const raw of text.split("\n")) {
+      const t = raw.split("#")[0].trim().split(/\s+/);
+      if (!t[0]) continue;
+      n++;
+      let ok = false;
+      if (t[0] === "crc") ok = crc8(hex(t[1])) === parseInt(t[2]);
+      else if (t[0] === "frame") {
+        const [err, f] = decode(hex(t[1]));
+        ok = err === t[2];
+        if (ok && err === "ok") {
+          const want = t.slice(3, 10).map(Number);
+          const got = [f.type, f.seq, f.roll, f.pitch, f.yaw, f.throttle, f.flags];
+          ok = same(got, want) && same(encode(...got), hex(t[1]));
+        }
+      } else if (t[0] === "pong") {
+        const [err, f] = decode(hex(t[1]));
+        ok = err === "ok" && same(encode(PONG, f.seq, f.roll, f.pitch, f.yaw, Math.min(+t[2], 65535), f.flags), hex(t[3]));
+      }
+      if (!ok) bad++;
+    }
+    el.textContent = `Frame vectors: ${n} lines, ${bad} failed: ${bad ? "FAIL" : "PASS"}`;
+    el.className = bad || n < 25 ? "bad" : "ok";   // 28 vector lines today (40 checks in C++/Python)
+  } catch (e) { el.textContent = "Frame vectors: could not load (" + e + ")"; el.className = "bad"; }
+}
+
+let run = null;
+const $ = (id) => document.getElementById(id);
+function setState(text, cls = "") { $("state").textContent = text; $("state").className = cls; }
+
+async function wakeLock() {
+  if (!("wakeLock" in navigator)) {
+    $("wake").textContent = window.isSecureContext ? "Screen wake lock not supported by this browser: raise the screen timeout."
+      : "Screen wake lock unavailable (needs HTTPS; this page is plain http): raise the phone's screen timeout.";
+    $("wake").className = "warn";
+    return null;
+  }
+  try { const l = await navigator.wakeLock.request("screen"); $("wake").textContent = "Screen wake lock held."; return l; }
+  catch (e) { $("wake").textContent = "Screen wake lock refused: " + e.message; $("wake").className = "warn"; return null; }
+}
+
+function start() {
+  const count = Math.max(100, parseInt($("count").value) || 10000);
+  run = { count, tSend: new Float64Array(count), rtt: new Float64Array(count).fill(NaN), ta: new Float64Array(count).fill(NaN),
+          late: new Float64Array(2 * count), lateTimeout: 0, unknown: 0, invalid: 0, echoErr: 0, ooo: 0, maxIdx: -1,
+          sent: 0, controls: 0, outstanding: new Map(), k: 0, t0: 0, timer: 0, stopped: false, reason: "",
+          started: new Date().toISOString(), live: { n: 0, sum: 0, max: NaN, taSum: 0, taMax: NaN, hist: new Uint32Array(BINS),
+          lateSum: 0, lateMax: NaN }, renderMax: 0 };
+  $("start").disabled = true; $("stop").disabled = false; $("dl").disabled = true;
+  setState("Connecting...");
+  wakeLock().then((l) => { run.lock = l; });
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  run.ws = ws;
+  ws.onopen = () => { setState("Running", "ok"); run.t0 = performance.now() + 200; schedule(); };
+  ws.onmessage = (ev) => onPong(new Uint8Array(ev.data), performance.now());
+  ws.onclose = () => { if (!run.stopped) finish("STOPPED: connection closed", "bad"); };
+  ws.onerror = () => {};
+}
+
+// Event k at t0 + k * 10 ms: even k sends ping k/2, odd k a control frame (D-M6-04).
+function schedule() {
+  if (run.stopped) return;
+  const due = run.t0 + run.k * PERIOD_MS / 2;
+  run.timer = setTimeout(tick, Math.max(0, due - performance.now()));
+}
+function tick() {
+  if (run.stopped) return;
+  const due = run.t0 + run.k * PERIOD_MS / 2, now = performance.now();
+  if (now < due - 0.25) { schedule(); return; }   // timer fired early: wait for the deadline
+  if (run.ws.readyState !== WebSocket.OPEN) return;
+  if (run.k % 2 === 0) {
+    const i = run.k / 2;
+    if (i >= run.count) { setTimeout(() => finish("Finished", "ok"), TIMEOUT_MS + 100); return; }
+    const f = encode(PING, i, MARK.roll, MARK.pitch, MARK.yaw, 0, MARK.flags);
+    run.tSend[i] = performance.now(); run.ws.send(f); run.outstanding.set(i & 0xFFFF, i); run.sent++;
+  } else {
+    run.ws.send(encode(CONTROL, (run.k - 1) / 2, 0, 0, 0, 0, 0)); run.controls++;   // throttle 0, not armed
+  }
+  const lv = run.live, late = now - due;
+  run.late[run.k] = late; lv.lateSum += late; lv.lateMax = isNaN(lv.lateMax) ? late : Math.max(lv.lateMax, late);
+  run.k++;
+  schedule();
+}
+function onPong(u8, t) {
+  const [err, f] = decode(u8);
+  if (err !== "ok" || f.type !== PONG) { run.invalid++; return; }
+  const i = run.outstanding.get(f.seq);
+  if (i === undefined) { run.unknown++; return; }
+  run.outstanding.delete(f.seq);
+  if (f.roll !== MARK.roll || f.pitch !== MARK.pitch || f.yaw !== MARK.yaw || f.flags !== MARK.flags) run.echoErr++;
+  const rtt = t - run.tSend[i];
+  if (rtt > TIMEOUT_MS) { run.lateTimeout++; return; }
+  run.rtt[i] = rtt; run.ta[i] = f.throttle;
+  const lv = run.live, ow = rtt / 2;
+  lv.n++; lv.sum += ow; lv.max = isNaN(lv.max) ? ow : Math.max(lv.max, ow);
+  lv.taSum += f.throttle; lv.taMax = isNaN(lv.taMax) ? f.throttle : Math.max(lv.taMax, f.throttle);
+  lv.hist[Math.min(BINS - 1, Math.floor(ow / BIN_MS))]++;
+  if (i < run.maxIdx) run.ooo++;
+  run.maxIdx = Math.max(run.maxIdx, i);
+}
+
+const pctl = (sorted, p) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p / 100 * sorted.length))] : NaN;
+// Upper edge of the histogram bin holding the p-th percentile (live display, 0.05 ms resolution).
+function histPctl(hist, n, p) {
+  if (!n) return NaN;
+  const want = Math.min(n - 1, Math.floor(p / 100 * n));
+  for (let b = 0, c = 0; b < hist.length; b++) { c += hist[b]; if (c > want) return (b + 1) * BIN_MS; }
+  return NaN;
+}
+function lostNow() {
+  let pending = 0;
+  const now = performance.now();
+  for (const i of run.outstanding.values()) if (now - run.tSend[i] <= TIMEOUT_MS) pending++;
+  return run.sent - run.live.n - pending;
+}
+// Exact figures over the whole run: called once, when the run has finished.
+function finalStats() {
+  const ow = [], ta = [];
+  for (let i = 0; i < run.count; i++) if (!isNaN(run.rtt[i])) { ow.push(run.rtt[i] / 2); ta.push(run.ta[i]); }
+  ow.sort((a, b) => a - b);
+  const lost = lostNow();
+  const late = Array.from(run.late.subarray(0, run.k)).sort((a, b) => a - b);
+  const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN;
+  return { received: ow.length, lost, lossPct: run.sent ? 100 * lost / run.sent : 0,
+           p50: pctl(ow, 50), p95: pctl(ow, 95), p99: pctl(ow, 99), p999: pctl(ow, 99.9), max: ow[ow.length - 1],
+           min: ow[0], mean: mean(ow), taMean: mean(ta), taMax: run.live.taMax,
+           lateMean: mean(late), lateMax: late[late.length - 1], lateP99: pctl(late, 99) };
+}
+function liveStats() {
+  const lv = run.live, n = lv.n, lost = lostNow(), k = Math.max(1, run.k);
+  return { received: n, lost, lossPct: run.sent ? 100 * lost / run.sent : 0,
+           p50: histPctl(lv.hist, n, 50), p95: histPctl(lv.hist, n, 95), p99: histPctl(lv.hist, n, 99), max: lv.max,
+           taMean: n ? lv.taSum / n : NaN, taMax: lv.taMax, lateMean: lv.lateSum / k, lateMax: lv.lateMax };
+}
+function render() {
+  if (!run) return;
+  const r0 = performance.now();
+  const s = run.final || liveStats(), f = (x) => isNaN(x) || x === undefined ? "-" : x.toFixed(2);
+  $("sent").textContent = `${run.sent} / ${s.received}`;
+  $("lost").textContent = `${s.lost} (${s.lossPct.toFixed(2)} %)`;
+  $("lost").className = s.lossPct > 0.5 ? "bad" : "";
+  $("ooo").textContent = run.ooo;
+  $("pct").innerHTML = `${f(s.p50)} / <span class="${s.p95 < 15 ? "ok" : "bad"}">${f(s.p95)}</span> / ` +
+                       `<span class="${s.p99 < 20 ? "ok" : "bad"}">${f(s.p99)}</span> / ${f(s.max)} ms`;
+  $("ta").textContent = `${f(s.taMean)} / ${f(s.taMax)} us`;
+  $("late").textContent = `${f(s.lateMean)} / ${f(s.lateMax)} ms`;
+  const bins = new Array(41).fill(0);   // 0.5 ms bins to 20 ms, then overflow
+  const per = Math.round(0.5 / BIN_MS), hist = run.live.hist;
+  for (let b = 0; b < hist.length; b++) bins[Math.min(40, Math.floor(b / per))] += hist[b];
+  const top = Math.max(1, ...bins), lines = [];
+  for (let b = 0; b < 41; b++) {
+    if (!bins[b] && b > 0 && b < 40) continue;
+    const label = b < 40 ? `${(b * 0.5).toFixed(1).padStart(4)}-${((b + 1) * 0.5).toFixed(1).padStart(4)}` : "  >= 20.0";
+    lines.push(`${label} ms ${String(bins[b]).padStart(6)} ${"#".repeat(Math.ceil(30 * Math.log1p(bins[b]) / Math.log1p(top)))}`);
+  }
+  $("hist").textContent = "one-way (RTT/2), log-scaled bars\n" + lines.join("\n");
+  if (!run.stopped) run.renderMax = Math.max(run.renderMax, performance.now() - r0);
+}
+function finish(text, cls) {
+  if (!run || run.stopped) return;
+  run.stopped = true; clearTimeout(run.timer); run.reason = text;
+  try { run.ws.close(); } catch (e) {}
+  if (run.lock) run.lock.release().catch(() => {});
+  run.final = finalStats();
+  render(); setState(text, cls);
+  $("start").disabled = false; $("stop").disabled = true; $("dl").disabled = false;
+}
+function download() {
+  const s = run.final || finalStats();
+  const out = { tool: "web/latency.html", transport: "ws (phone browser)", userAgent: navigator.userAgent,
+    started: run.started, ended: new Date().toISOString(), result_state: run.reason, rate_hz: 1000 / PERIOD_MS,
+    count: run.count, pings_sent: run.sent, control_frames: run.controls, received: s.received, lost: s.lost,
+    loss_pct: s.lossPct, late_after_timeout: run.lateTimeout, out_of_order: run.ooo, unknown_pongs: run.unknown,
+    invalid_rx: run.invalid, echo_errors: run.echoErr,
+    one_way_ms: { min: s.min, mean: s.mean, p50: s.p50, p95: s.p95, p99: s.p99, p99_9: s.p999, max: s.max },
+    device_turnaround_us: { mean: s.taMean, max: s.taMax },
+    timer_lateness_ms: { mean: s.lateMean, p99: s.lateP99, max: s.lateMax },
+    pass_p95: s.p95 < 15, pass_p99: s.p99 < 20, render_ms_max: +run.renderMax.toFixed(3),
+    t_send_ms: Array.from(run.tSend.subarray(0, run.sent), (x) => +(x - run.t0).toFixed(3)),   // from the first deadline
+    event_lateness_ms: Array.from(run.late.subarray(0, run.k), (x) => +x.toFixed(3)),          // even: ping, odd: control
+    rtt_ms: Array.from(run.rtt, (x) => isNaN(x) ? null : +x.toFixed(3)),
+    turnaround_us: Array.from(run.ta, (x) => isNaN(x) ? null : x) };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" }));
+  a.download = `m6-phone-ws-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.click();
+}
+
+// Blueprint 4.6: a hidden page or locked screen stops sending.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && run && !run.stopped) finish("STOPPED: page hidden (sending stops, blueprint 4.6)", "bad");
+});
+$("start").onclick = start;
+$("stop").onclick = () => finish("Stopped by user", "warn");
+$("dl").onclick = download;
+setInterval(render, 500);
+checkVectors();
+</script>
+</body>
+</html>

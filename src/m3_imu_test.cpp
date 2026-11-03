@@ -2,7 +2,7 @@
 
 #include "board_config.h"
 
-#if FE_M3_TEST || FE_M4_TEST || FE_M5_TEST
+#if FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M6_TEST
 
 #include <atomic>
 #include <cmath>
@@ -116,6 +116,10 @@ uint32_t s_b_seconds = kBSeconds;
 bool s_b_tasks_started = false;                 // Core 0 only
 std::atomic<uint32_t> s_b_next_seconds{0};
 std::atomic<bool> s_b_next{false};
+
+// Called on Core 1 after every successful read in Phase B (M6 setpoint reader). Set before
+// m3_phase_b_start(); null in M3 to M5.
+std::atomic<M3SampleHook> s_sample_hook{nullptr};
 
 // Phase B figures handed to the M4 test once the Phase B summary has been printed.
 M3PhaseBResult s_b_result{};
@@ -280,6 +284,12 @@ void run_phase(Phase ph, uint32_t seconds, uint32_t notify_every, bool reads) {
         win.burst_sum += dur;
         if (static_cast<int32_t>(t_irq - drv_mpu6500::gyro_valid_from_us()) >= 0) {
             account_sample(win, sample);
+        }
+        if (ph == kB) {
+            const M3SampleHook hook = s_sample_hook.load(std::memory_order_relaxed);
+            if (hook != nullptr) {
+                hook(index + 1);  // the window this sample belongs to (the "B wNN" number)
+            }
         }
     }
 
@@ -687,6 +697,8 @@ void m3_phase_b_start(uint32_t seconds) {
                             &s_imu_task, 1);
 }
 
+void m3_set_sample_hook(M3SampleHook hook) { s_sample_hook.store(hook, std::memory_order_relaxed); }
+
 bool m3_phase_b_result(M3PhaseBResult* out) {
     if (!s_b_result_ready.load(std::memory_order_acquire)) {
         return false;
@@ -695,4 +707,4 @@ bool m3_phase_b_result(M3PhaseBResult* out) {
     return true;
 }
 
-#endif  // FE_M3_TEST || FE_M4_TEST || FE_M5_TEST
+#endif  // FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M6_TEST

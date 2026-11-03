@@ -81,6 +81,15 @@ constexpr const char* kFsPartitionLabel = "storage";
 constexpr const char* kFsBasePath = "/fs";
 constexpr uint32_t kHttpChunkBytes = 2048;
 
+// UDP control and ping server (M6, blueprint section 4.6). The port is our own choice on our
+// own AP (D-M6-04). The receive task runs on Core 0 (blueprint section 4.2: udp_rx_task ~5).
+constexpr uint16_t kUdpPort = 5858;
+constexpr uint32_t kUdpTaskPriority = 5;
+
+// Setpoint staleness (blueprint section 4.8: control-link silence cut at 150 ms). In M6 the
+// Core 1 loop only counts setpoints older than this; nothing acts on them.
+constexpr int64_t kSetpointStaleUs = 150 * 1000;
+
 }  // namespace board
 
 // Set to 0 once the LED GPIO is identified.
@@ -104,13 +113,20 @@ constexpr uint32_t kHttpChunkBytes = 2048;
 #endif
 
 // Set to 0 to skip the Module 5 bench test (Wi-Fi AP, static pages, IMU under Wi-Fi).
-#define FE_M5_TEST 1
+#define FE_M5_TEST 0
 
-#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST) > 1
-#error "FE_M2_TEST, FE_M3_TEST, FE_M4_TEST and FE_M5_TEST are mutually exclusive: enable only one"
+// Set to 0 to skip the Module 6 bench test (UDP and WebSocket latency, IMU loop alongside).
+#define FE_M6_TEST 1
+
+#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST + FE_M6_TEST) > 1
+#error "FE_M2_TEST to FE_M6_TEST are mutually exclusive: enable only one"
 #endif
+
+namespace board {
+constexpr uint32_t kM6ImuSeconds = 1200;  // M6: one M3 Phase B run covering every latency run
+}  // namespace board
 
 // Bench-only IMU ISR instrumentation (raw-interval min/max, handler cycle count, runtime
 // notify-every-N). Off in flight builds, where the ISR is timestamp, count, notify only.
-// M4 (P5) and M5 (IMU under Wi-Fi) rerun M3 Phase B, so they need it too.
-#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST)
+// M4 (P5), M5 and M6 (IMU under Wi-Fi) rerun M3 Phase B, so they need it too.
+#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M6_TEST)

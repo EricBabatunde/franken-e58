@@ -41,3 +41,7 @@ CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
 # LittleFS reads through the cache-mapped partition instead of esp_flash_read(), which would
 # disable the cache on both cores for every read (M5)
 CONFIG_LITTLEFS_MMAP_PARTITION=y
+
+# WebSocket on the HTTP server (M6, blueprint section 4.6): the browser control and ping
+# endpoint "/ws"
+CONFIG_HTTPD_WS_SUPPORT=y

@@ -24,7 +24,14 @@ public:
     // Copies the latest complete value into `out`. Returns false if every attempt
     // overlapped a write; the caller tries again later.
     bool read(T* out, int max_tries = 8) const {
+        int tries = 0;
+        return read(out, max_tries, &tries);
+    }
+
+    // As above; `tries_used` receives the number of attempts made (1 = no retry).
+    bool read(T* out, int max_tries, int* tries_used) const {
         for (int i = 0; i < max_tries; ++i) {
+            *tries_used = i + 1;
             const uint32_t s1 = seq_.load(std::memory_order_acquire);
             if ((s1 & 1u) != 0) {
                 continue;

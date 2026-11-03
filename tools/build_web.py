@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Build the LittleFS content (M5): gzip every file in web/ into data/<name>.gz and generate
-the deterministic test file data/test.bin.gz. Run before `pio run -t buildfs`.
+"""Build the LittleFS content (M5, M6): gzip every file in web/ into data/<name>.gz, copy the
+control frame vectors (M6, for web/latency.html) and generate the deterministic test file
+data/test.bin.gz. Run before `pio run -t buildfs`.
 
 The test file is TEST_FILE_BYTES bytes from a fixed-seed xorshift32 generator, so it does not
 compress and tools/m5_http_test.py can regenerate it to check the SHA-256.
@@ -13,6 +14,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
 DATA = ROOT / "data"
+VECTORS = ROOT / "components" / "comms" / "test_vectors" / "control_frame_vectors.txt"
 TEST_FILE_NAME = "test.bin"
 TEST_FILE_BYTES = 100 * 1024
 TEST_FILE_SEED = 0x00E58E58
@@ -46,6 +48,10 @@ def main():
         dst.write_bytes(gz(src.read_bytes()))
         total += dst.stat().st_size
         print(f"{rel}: {src.stat().st_size} B -> {dst.relative_to(ROOT)} {dst.stat().st_size} B")
+    dst = DATA / (VECTORS.name + ".gz")
+    dst.write_bytes(gz(VECTORS.read_bytes()))
+    total += dst.stat().st_size
+    print(f"{VECTORS.name}: {VECTORS.stat().st_size} B -> {dst.relative_to(ROOT)} {dst.stat().st_size} B")
     body = test_file_bytes()
     dst = DATA / (TEST_FILE_NAME + ".gz")
     dst.write_bytes(gz(body))
