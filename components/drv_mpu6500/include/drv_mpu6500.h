@@ -73,6 +73,10 @@ float accel_g(int16_t raw);   // board::kImuAccelRangeG scaling (PS p.8)
 // pinned to the core that should take the interrupt; `task` receives the notifications.
 esp_err_t int_install(TaskHandle_t task);
 
+// Bench fault injection (M7a): stops or restores data-ready interrupts (hal_gpio::imu_int_enable).
+// Call from the task that called int_install().
+void int_enable(bool enabled);
+
 uint32_t raw_pulses();      // every data-ready pulse since int_install (wraps)
 uint32_t last_notify_us();  // ISR timestamp of the most recent notifying pulse
 

@@ -45,3 +45,8 @@ CONFIG_LITTLEFS_MMAP_PARTITION=y
 # WebSocket on the HTTP server (M6, blueprint section 4.6): the browser control and ping
 # endpoint "/ws"
 CONFIG_HTTPD_WS_SUPPORT=y
+
+# MCPWM compare setter in IRAM (M7a, blueprint 4.9): hal_mcpwm::set_all_permille() is called from
+# the Core 1 flight task and must be IRAM-safe. (The blueprint's CONFIG_MCPWM_ISR_IRAM_SAFE is
+# CONFIG_MCPWM_ISR_CACHE_SAFE in IDF 5.5.3 and is not needed: no MCPWM interrupts are used.)
+CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y

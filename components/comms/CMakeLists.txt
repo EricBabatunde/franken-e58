@@ -13,5 +13,5 @@ idf_component_register(
     SRCS "wifi_ap.cpp" "http_static.cpp" "control_frame.cpp" "link.cpp" "udp_server.cpp" "ws_server.cpp"
     INCLUDE_DIRS "include"
     REQUIRES board_config esp_wifi esp_netif esp_event esp_http_server seqlock
-    PRIV_REQUIRES esp_timer esp_app_format lwip
+    PRIV_REQUIRES esp_timer esp_app_format lwip esp_hw_support freertos
     EMBED_TXTFILES "test_vectors/control_frame_vectors.txt")

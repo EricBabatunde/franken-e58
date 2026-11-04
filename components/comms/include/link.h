@@ -28,6 +28,12 @@ struct Counters {
     uint32_t ta_min = UINT32_MAX;
     uint32_t ta_max = 0;
     uint64_t ta_sum = 0;
+    // Setpoint write cost (B-M6-10), CPU cycles: the whole critical section including entry and
+    // exit, and the seqlock write alone inside it. The difference is the added Core 0 cost.
+    uint32_t wr_cyc_max = 0;
+    uint64_t wr_cyc_sum = 0;
+    uint32_t wr_in_cyc_max = 0;
+    uint64_t wr_in_cyc_sum = 0;
     // WebSocket only.
     uint32_t sessions = 0;        // handshakes completed
     uint32_t closed_bad = 0;      // sessions closed by us on a malformed frame

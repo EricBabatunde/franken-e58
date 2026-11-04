@@ -91,7 +91,11 @@ esp_err_t start() {
     cfg.ap.channel = board::kWifiChannel;
     cfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
     cfg.ap.max_connection = board::kWifiMaxStations;
-    cfg.ap.beacon_interval = 100;
+    // B-M6-08: both set explicitly. A zeroed wifi_ap_config_t holds DTIM 0; IDF 5.5.3 documents
+    // dtim_period 1 to 10, default 1, and beacon_interval 100 to 60000 TU, default 100
+    // (esp_wifi_types_generic.h).
+    cfg.ap.beacon_interval = board::kWifiBeaconIntervalTu;
+    cfg.ap.dtim_period = board::kWifiDtimPeriod;
     cfg.ap.pmf_cfg.required = false;
     keep(esp_wifi_set_config(WIFI_IF_AP, &cfg));
     keep(esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
@@ -125,6 +129,8 @@ Report report() {
     if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
         r.authmode = cfg.ap.authmode;
         r.max_connection = cfg.ap.max_connection;
+        r.beacon_interval = cfg.ap.beacon_interval;
+        r.dtim_period = cfg.ap.dtim_period;
     }
     esp_wifi_get_ps(&r.ps);
     esp_wifi_get_bandwidth(WIFI_IF_AP, &r.bandwidth);

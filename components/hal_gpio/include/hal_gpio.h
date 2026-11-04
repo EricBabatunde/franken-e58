@@ -21,4 +21,10 @@ int tof_xshut_level();
 using IsrHandler = void (*)(void*);
 esp_err_t imu_int_install(IsrHandler handler, void* arg);
 
+// Bench fault injection (M7a, missing data-ready). Call from the core that installed the
+// interrupt: the enable acts on the calling core. Disable: gpio_intr_disable(), in IRAM, no lock.
+// Enable: gpio_intr_enable(), which takes the GPIO driver's spinlock (gpio_context.gpio_spinlock,
+// also taken by GPIO configuration calls on Core 0); never used while ARMED.
+void imu_int_enable(bool enabled);
+
 }  // namespace hal_gpio

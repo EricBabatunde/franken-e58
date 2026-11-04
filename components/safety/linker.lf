@@ -1,0 +1,6 @@
+# The arming and failsafe logic runs every iteration of the Core 1 flight task: code in IRAM,
+# read-only data in DRAM (CLAUDE.md: control paths in IRAM).
+[mapping:safety]
+archive: libsafety.a
+entries:
+    * (noflash)

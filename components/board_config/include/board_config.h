@@ -5,8 +5,23 @@
 
 namespace board {
 
-// Motors (MCPWM in a later module): M1 FL, M2 FR, M3 RL, M4 RR
+// Motors (MCPWM, components/hal_mcpwm): M1 FL, M2 FR, M3 RL, M4 RR
 constexpr int kMotorGpio[4] = {4, 5, 6, 7};
+
+// Motor PWM (blueprint section 3.2): one MCPWM timer drives all four outputs at 20 kHz.
+// 40 MHz = PLL_F160M / 2 (group prescale) / 2 (timer prescale), both prescalers 1 to 256
+// (IDF 5.5.3 mcpwm_ll.h; verify against the TRM MCPWM chapter). 2000 ticks per period.
+constexpr uint32_t kPwmHz = 20000;
+constexpr uint32_t kPwmResolutionHz = 40 * 1000 * 1000;
+constexpr uint32_t kPwmPeriodTicks = kPwmResolutionHz / kPwmHz;
+static_assert(kPwmResolutionHz % kPwmHz == 0, "PWM period must be a whole number of ticks");
+static_assert(kPwmPeriodTicks < 65536, "MCPWM timer peak is 16 bits");
+
+// Bench duty cap (M7a): with the arming state machine ARMED, every output is
+// throttle (permille) x kBenchDutyCapPermille / 1000. No motors are connected in M7a.
+constexpr uint32_t kBenchDutyCapPermille = 200;
+static_assert(kBenchDutyCapPermille <= 300, "bench duty cap above 300 permille is not allowed");
+constexpr const char* kBenchBanner = "M7a bench firmware: no motors may be connected";
 
 // Bus A (I2C0): MPU-6500
 constexpr int kImuSda = 1;
@@ -74,6 +89,8 @@ static_assert(kTofPeriodMs * 1000 > kTofTimingBudgetUs + 4000,
 // components/comms/include/wifi_credentials.h.
 constexpr uint8_t kWifiChannel = 1;          // fixed: 1, 6 or 11
 constexpr uint8_t kWifiMaxStations = 1;
+constexpr uint16_t kWifiBeaconIntervalTu = 100;  // 102.4 ms (B-M6-08)
+constexpr uint8_t kWifiDtimPeriod = 1;           // every beacon (B-M6-08)
 
 // LittleFS: partition "storage" in partitions.csv (subtype spiffs, flagged readonly), mounted
 // read-only. HTTP files are sent in chunks of kHttpChunkBytes from one static buffer.
@@ -89,6 +106,37 @@ constexpr uint32_t kUdpTaskPriority = 5;
 // Setpoint staleness (blueprint section 4.8: control-link silence cut at 150 ms). In M6 the
 // Core 1 loop only counts setpoints older than this; nothing acts on them.
 constexpr int64_t kSetpointStaleUs = 150 * 1000;
+
+// ---- Arming and failsafe (blueprint section 4.8, M7a). Proposed thresholds: docs/M7a_package.md.
+constexpr int64_t kLinkSilenceCutUs = kSetpointStaleUs;  // link fresh below, cut above (150 ms)
+constexpr uint16_t kThrottleMinPermille = 10;            // "throttle at minimum"
+constexpr int64_t kThrottleMinHoldUs = 500 * 1000;       // held at minimum for this long before arming
+constexpr uint32_t kImuMissingCutUs = 3000;              // no data-ready for longer than this: cut
+constexpr uint32_t kImuHealthySamples = 100;             // consecutive good reads before "IMU healthy"
+constexpr float kTiltLimitDeg = 20.0f;                   // provisional
+constexpr uint32_t kLoopOverrunUs = 1000;                // an iteration longer than this is counted
+// Gyro calibration at rest: a window of kGyroCalSamples consecutive samples. Each axis: standard
+// deviation at most kGyroCalSdMaxDps and max - min at most kGyroCalRangeMaxDps (bench noise about
+// 0.1 dps sd), |mean| (the bias) at most kGyroCalBiasMaxDps (loose sanity bound; measured bias up to
+// about 2.3 dps); accelerometer norm sd at most kAccelCalNormSdMaxG. Any failure restarts the window.
+constexpr uint32_t kGyroCalSamples = 2000;
+constexpr float kGyroCalSdMaxDps = 0.5f;
+constexpr float kGyroCalRangeMaxDps = 4.0f;
+constexpr float kGyroCalBiasMaxDps = 10.0f;
+constexpr float kAccelCalNormSdMaxG = 0.01f;
+// The at-rest accelerometer norm g0 comes from the calibration window (R6: reads 1.068 g), so
+// nothing below relies on 1 g. g0 outside this range: "accelerometer bad".
+constexpr float kAccelRefMinG = 0.85f;
+constexpr float kAccelRefMaxG = 1.25f;
+// Motion after calibration, judged per block of kMotionBlockSamples: any axis |gyro - bias| above
+// kMotionGyroDps, or | |a| / g0 - 1 | above kMotionAccelFrac. At rest: no moving block for kRestHoldUs.
+constexpr uint32_t kMotionBlockSamples = 100;
+constexpr float kMotionGyroDps = 3.0f;
+constexpr float kMotionAccelFrac = 0.05f;
+constexpr int64_t kRestHoldUs = 500 * 1000;
+// |a| / g0 outside this band: the accelerometer vector is not trusted for tilt.
+constexpr float kAccelValidMinFrac = 0.85f;
+constexpr float kAccelValidMaxFrac = 1.15f;
 
 }  // namespace board
 
@@ -118,11 +166,18 @@ constexpr int64_t kSetpointStaleUs = 150 * 1000;
 // The Module 6 bench test (UDP and WebSocket latency, IMU loop alongside) was removed at the M6
 // close-out (3 November 2026); it is kept in the git history.
 
-#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST) > 1
-#error "FE_M2_TEST to FE_M5_TEST are mutually exclusive: enable only one"
+// Set to 0 to skip the Module 7a bench test (motor-output layer, arming and failsafe state
+// machine). NO MOTORS, MOSFET STAGE OR SHIELD MAY BE CONNECTED: GPIO 4 to 7 are measured with a
+// multimeter only. Motors under load stay gated by the VBAT cutoff and brownout tuning
+// (blueprint 6.1 O4, Phase 3 step 3).
+#define FE_M7A_TEST 1
+
+#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST + FE_M7A_TEST) > 1
+#error "FE_M2_TEST to FE_M7A_TEST are mutually exclusive: enable only one"
 #endif
 
 // Bench-only IMU ISR instrumentation (raw-interval min/max, handler cycle count, runtime
 // notify-every-N). Off in flight builds, where the ISR is timestamp, count, notify only.
-// M4 (P5) and M5 (IMU under Wi-Fi) rerun M3 Phase B, so they need it too.
-#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST)
+// M4 (P5) and M5 (IMU under Wi-Fi) rerun M3 Phase B, and the M7a bench reports the same
+// window figures, so they need it too.
+#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M7A_TEST)

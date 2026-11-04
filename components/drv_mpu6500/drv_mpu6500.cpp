@@ -256,6 +256,8 @@ esp_err_t int_install(TaskHandle_t task) {
     return hal_gpio::imu_int_install(&isr, nullptr);
 }
 
+void int_enable(bool enabled) { hal_gpio::imu_int_enable(enabled); }
+
 uint32_t raw_pulses() { return s_raw_count.load(kRelaxed); }
 uint32_t last_notify_us() { return s_notify_ts.load(std::memory_order_acquire); }
 

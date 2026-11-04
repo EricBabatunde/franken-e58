@@ -57,6 +57,15 @@ int tof_xshut_level() {
     return gpio_get_level(pin);
 }
 
+void imu_int_enable(bool enabled) {
+    const gpio_num_t pin = static_cast<gpio_num_t>(board::kImuInt);
+    if (enabled) {
+        gpio_intr_enable(pin);
+    } else {
+        gpio_intr_disable(pin);
+    }
+}
+
 esp_err_t imu_int_install(IsrHandler handler, void* arg) {
     gpio_config_t cfg = {};
     cfg.pin_bit_mask = 1ULL << board::kImuInt;

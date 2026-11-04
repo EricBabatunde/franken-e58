@@ -24,6 +24,8 @@ struct Report {
     wifi_ps_type_t ps = WIFI_PS_MIN_MODEM;
     wifi_bandwidth_t bandwidth = WIFI_BW_HT40;
     uint8_t protocol = 0;           // WIFI_PROTOCOL_11B | 11G | 11N bitmap
+    uint16_t beacon_interval = 0;   // TU, read back (B-M6-08)
+    uint8_t dtim_period = 0;        // beacons, read back (B-M6-08)
     bool placeholder_credentials = false;  // the header still holds the template values
 };
 Report report();
