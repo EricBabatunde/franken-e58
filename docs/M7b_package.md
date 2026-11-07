@@ -394,7 +394,7 @@ Logs: `logs/device-monitor-261106-194011.log` to `logs/device-monitor-261107-035
 | 1 | Build, config check, host tests | Both environments 0 warnings; `verify_sdkconfig.sh` 38/38 and 39/39; safety 7 455 485 checks, output gate 566 535, seqlock and control frame (4043) pass |
 | 2 | Heartbeat stall (`h`) | 22 cuts `wd_heartbeat`, 5008 to 5465 µs after the last heartbeat; gates low 1.44 to 1.49 µs after the decision. PASS |
 | 3 | Missing data-ready (`m`) | 42 cuts `wd_imu_missing`, 3017 to 3496 µs after the last pulse (M7a: 4031 µs); gates low 1.43 to 1.91 µs. PASS |
-| 4 | `H`, `T`, `X` (3 each) | `INT_WDT` 1.40 to 1.44 s, `TASK_WDT` 3.21 s, `PANIC` 1.21 s from hang to reset; each reboot DISARMED. 0 V on the meter during the backtrace: to be confirmed by the user. PASS on the logs |
+| 4 | `H`, `T`, `X` (3 each) | `INT_WDT` 1.40 to 1.44 s, `TASK_WDT` 3.21 s, `PANIC` 1.21 s from hang to reset; each reboot DISARMED. 0 V on the meter during every backtrace (user, 7 November 2026); 0.07 V at throttle 100 while ARMED. PASS |
 | 5 | Reset while ARMED (session 2, boot retry on) | 22 resets, all back to DISARMED, IMU initialised on the first attempt every time; 3 found SDA held low and cleared it; none stuck. PASS |
 | 6 | Task layout | 15 tasks; Core 1 runs only flight, IDLE1, ipc1; Core 1 interrupts: GPIO, I2C_EXT0, TG0_T0 (level 3), tick, FROM_CPU; interrupt watchdog int 24 level 4. PASS |
 | 10 | IMU recovery | 67 recoveries, all OK in 104.1 to 104.6 ms, none while ARMED; `z` while ARMED cut by `wd_imu_missing` first. Restart path once: 3 failed attempts, controlled restart 1/2, then `FLIGHT: FAIL` in BOOT. PASS |
