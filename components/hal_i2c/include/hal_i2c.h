@@ -29,6 +29,7 @@ enum class LineAction : uint8_t {
     kCleared,  // SDA low, SCL high: clocked, SDA released
     kSdaStuck, // SDA low, SCL high: clocked, SDA still low
     kSclLow,   // SCL low: not clocked (the line is held by something else)
+    kClocked,  // both high, clocked 9 times plus STOP anyway (always_clear, M7b)
 };
 struct LineCheck {
     LineAction action = LineAction::kNotRun;
@@ -40,7 +41,9 @@ struct LineCheck {
 // Before creating the bus, reads SDA and SCL. If SDA is low while SCL is high, clocks SCL
 // up to 9 times until SDA releases and issues a STOP. The outcome is kept for line_check().
 // No logging: bus A is created on Core 1. Callers report the outcome from Core 0.
-esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz);
+// `always_clear` (M7b boot retry): clock SCL 9 times and issue a STOP even when SDA reads high
+// (action kCleared or kSdaStuck with clocks = 9).
+esp_err_t init(Bus bus, int sda_gpio, int scl_gpio, uint32_t scl_hz, bool always_clear = false);
 LineCheck line_check(Bus bus);
 const char* line_action_name(LineAction a);  // e.g. "idle, no clear"
 
@@ -74,5 +77,10 @@ esp_err_t write_reg16_block(Device d, uint16_t reg, const uint8_t* data, size_t 
 // Transfers and probe() return ESP_ERR_INVALID_STATE while a handle is missing,
 // e.g. after a failed rebuild. Calling recover() again retries the rebuild.
 esp_err_t recover(Bus bus);
+
+// i2c_master_bus_reset() on the existing bus (M3 investigation: allocation-free, takes the shared
+// periph_spinlock briefly; on the ESP32-S3 the driver does not wait for its 9-pulse clear to end).
+// Bus owner only, between transfers, and never while ARMED (M7b IMU recovery and boot retry).
+esp_err_t bus_reset(Bus bus);
 
 }  // namespace hal_i2c

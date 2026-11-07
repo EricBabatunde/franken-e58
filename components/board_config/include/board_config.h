@@ -17,11 +17,12 @@ constexpr uint32_t kPwmPeriodTicks = kPwmResolutionHz / kPwmHz;
 static_assert(kPwmResolutionHz % kPwmHz == 0, "PWM period must be a whole number of ticks");
 static_assert(kPwmPeriodTicks < 65536, "MCPWM timer peak is 16 bits");
 
-// Bench duty cap (M7a): with the arming state machine ARMED, every output is
-// throttle (permille) x kBenchDutyCapPermille / 1000. No motors are connected in M7a.
+// Bench duty cap (M7a, kept in M7b): with the arming state machine ARMED, every output is
+// throttle (permille) x kBenchDutyCapPermille / 1000. No motors are connected in M7a or M7b
+// (M7b: 10 kOhm pull-downs from GPIO 4 to 7 to GND imitate the shield).
 constexpr uint32_t kBenchDutyCapPermille = 200;
 static_assert(kBenchDutyCapPermille <= 300, "bench duty cap above 300 permille is not allowed");
-constexpr const char* kBenchBanner = "M7a bench firmware: no motors may be connected";
+constexpr const char* kBenchBanner = "M7b bench firmware: no motors may be connected";
 
 // Bus A (I2C0): MPU-6500
 constexpr int kImuSda = 1;
@@ -138,6 +139,43 @@ constexpr int64_t kRestHoldUs = 500 * 1000;
 constexpr float kAccelValidMinFrac = 0.85f;
 constexpr float kAccelValidMaxFrac = 1.15f;
 
+// ---- GPTimer heartbeat watchdog (M7b, blueprint 4.2 and 4.8). One GPTimer alarm every
+// kWdtPeriodUs, interrupt allocated on Core 1 at level kWdtIntrLevel (the highest the IDF GPTimer
+// driver accepts: low and medium levels 1 to 3). Thresholds are enforced only while ARMED.
+constexpr uint32_t kWdtPeriodUs = 500;
+constexpr int kWdtIntrLevel = 3;
+constexpr uint32_t kWdtResolutionHz = 10 * 1000 * 1000;   // 0.1 us ticks for the ISR entry latency
+constexpr uint32_t kWdtHeartbeatStallUs = 5000;           // flight_task heartbeat older than this: cut
+// Missing data-ready is decided by the watchdog ISR at kImuMissingCutUs (3 ms). The flight task's
+// own 1 ms-tick check stays as a backup at a looser threshold, so it fires only if the ISR is dead.
+constexpr uint32_t kImuMissingTickCutUs = 6000;
+constexpr uint32_t kWdtAliveUs = 4 * kWdtPeriodUs;         // ISR count unchanged this long: watchdog dead
+static_assert(kWdtHeartbeatStallUs > 3 * 1000 + kWdtPeriodUs, "heartbeat threshold must exceed the 3-tick wait");
+
+// ---- IMU recovery while SAFE or DISARMED only (M7b). Never while ARMED: the cut latches first.
+constexpr uint32_t kRecoveryMissingUs = 50 * 1000;   // data-ready missing this long: try a recovery
+constexpr uint32_t kRecoveryAttempts = 3;            // per episode
+constexpr int64_t kRecoveryBackoffUs = 1000 * 1000;  // between attempts
+constexpr uint32_t kRestartLimit = 2;                // controlled restarts per power-on (RTC memory)
+
+// ---- Boot robustness (M7b). false for the first bench session (instrument only: the IMU init
+// error after a reset while armed is recorded); true once the retry is approved: the bus is
+// always clocked 9 times plus a STOP before the first transfer, and a failed init is retried
+// after i2c_master_bus_reset(), a best-effort DEVICE_RESET and a 100 ms wait.
+constexpr bool kImuBootRetry = true;  // approved after session 1 (7 November 2026)
+constexpr uint32_t kImuBootAttempts = 3;
+constexpr uint32_t kImuBootRetryWaitMs = 100;
+
+// ---- Setpoint writer critical section (B-M6-10, M7b decision D3). true: each Core 0 setpoint
+// slot write runs inside portENTER_CRITICAL; false: plain seqlock write. A/B measured in M7b: Core 1
+// equal (0 give-ups, 0 torn either way), Core 0 cheaper without it, so false is the default.
+constexpr bool kSetpointCriticalSection = false;  // removed after the A/B (7 November 2026)
+
+// ---- M7b bench fault injection (console keys only, never from the network).
+constexpr uint32_t kFaultStallShortUs = 20 * 1000;       // 'h': interrupts on
+constexpr uint32_t kFaultStallMaskedUs = 1000 * 1000;    // 'H': interrupts masked on Core 1
+constexpr uint32_t kFaultStallLongUs = 10 * 1000 * 1000; // 'T': interrupts on (task watchdog)
+
 }  // namespace board
 
 // Set to 0 once the LED GPIO is identified.
@@ -170,14 +208,19 @@ constexpr float kAccelValidMaxFrac = 1.15f;
 // machine). NO MOTORS, MOSFET STAGE OR SHIELD MAY BE CONNECTED: GPIO 4 to 7 are measured with a
 // multimeter only. Motors under load stay gated by the VBAT cutoff and brownout tuning
 // (blueprint 6.1 O4, Phase 3 step 3).
-#define FE_M7A_TEST 1
+#define FE_M7A_TEST 0
 
-#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST + FE_M7A_TEST) > 1
-#error "FE_M2_TEST to FE_M7A_TEST are mutually exclusive: enable only one"
+// Set to 0 to skip the Module 7b bench test (GPTimer heartbeat watchdog, hard latch, panic
+// force-low, fault injection, IMU recovery, task layout). Same safety boundary as M7a: NO MOTORS,
+// MOSFET STAGE OR SHIELD; 10 kOhm pull-downs on GPIO 4 to 7 only.
+#define FE_M7B_TEST 1
+
+#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST + FE_M7A_TEST + FE_M7B_TEST) > 1
+#error "FE_M2_TEST to FE_M7B_TEST are mutually exclusive: enable only one"
 #endif
 
 // Bench-only IMU ISR instrumentation (raw-interval min/max, handler cycle count, runtime
 // notify-every-N). Off in flight builds, where the ISR is timestamp, count, notify only.
 // M4 (P5) and M5 (IMU under Wi-Fi) rerun M3 Phase B, and the M7a bench reports the same
 // window figures, so they need it too.
-#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M7A_TEST)
+#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M7A_TEST || FE_M7B_TEST)

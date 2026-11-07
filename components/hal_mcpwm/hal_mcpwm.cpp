@@ -5,6 +5,7 @@
 #include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "hal/mcpwm_ll.h"
+#include "output_gate.h"
 
 // mcpwm_generator_set_force_level() is not placed in IRAM in IDF 5.5.3, even with
 // CONFIG_MCPWM_CTRL_FUNC_IN_IRAM (esp_driver_mcpwm/linker.lf lists only the compare and period
@@ -28,6 +29,11 @@ int s_gen_id[kOutputs] = {0, 1, 0, 1};
 bool s_ready = false;     // timer running
 bool s_force_ok = false;  // force fields identified: the IRAM force path is usable
 volatile uint16_t s_duty = 0;
+// Panic force-low (M7b, D1b): the gen_force register value of each operator with both generators
+// forced low, captured from the hardware once the verified force path has set it. The panic
+// wrapper writes these constants and nothing else.
+uint32_t s_panic_force_val[2] = {0, 0};
+bool s_panic_ready = false;
 
 // 0: not forced, 1: forced low, 2: forced high (mcpwm_ll_gen_set_continue_force_level: level + 1).
 inline uint32_t IRAM_ATTR force_mode(int oper, int gen) {
@@ -35,6 +41,37 @@ inline uint32_t IRAM_ATTR force_mode(int oper, int gen) {
     return gen == 0 ? dev->operators[oper].gen_force.gen_a_cntuforce_mode
                     : dev->operators[oper].gen_force.gen_b_cntuforce_mode;
 }
+
+// Register layer for the output gate (output_gate.h). Interrupts are masked on the calling core
+// (portSET_INTERRUPT_MASK_FROM_ISR nests, so the watchdog ISR may use it too).
+struct DevOps {
+    static UBaseType_t IRAM_ATTR mask() { return portSET_INTERRUPT_MASK_FROM_ISR(); }
+    static void IRAM_ATTR unmask(UBaseType_t m) { portCLEAR_INTERRUPT_MASK_FROM_ISR(m); }
+    static void IRAM_ATTR force_all_low() {
+        if (!s_force_ok) return;  // before init the pins are plain GPIO outputs held low (hal_gpio)
+        mcpwm_dev_t* dev = MCPWM_LL_GET_HW(kGroup);
+        for (int i = 0; i < kOutputs; ++i) {
+            mcpwm_ll_gen_set_continue_force_level(dev, s_oper_id[i], s_gen_id[i], 0);
+        }
+    }
+    static void IRAM_ATTR release_all() {
+        if (!s_ready) return;
+        mcpwm_dev_t* dev = MCPWM_LL_GET_HW(kGroup);
+        for (int i = 0; i < kOutputs; ++i) {
+            mcpwm_ll_gen_disable_continue_force_action(dev, s_oper_id[i], s_gen_id[i]);
+        }
+    }
+    static void IRAM_ATTR set_compare(uint16_t permille) {
+        if (!s_ready) return;
+        const uint32_t ticks = static_cast<uint32_t>(permille) * board::kPwmPeriodTicks / 1000u;
+        for (int i = 0; i < kOutputs; ++i) {
+            mcpwm_comparator_set_compare_value(s_cmpr[i], ticks);  // IRAM with CONFIG_MCPWM_CTRL_FUNC_IN_IRAM, no lock
+        }
+        s_duty = permille;
+    }
+};
+
+OutputGate<DevOps> s_gate;
 
 }  // namespace
 
@@ -108,44 +145,38 @@ InitReport init() {
         r.err = ESP_ERR_INVALID_STATE;
         return r;
     }
+    // Capture the panic constants: both generators of operators 0 and 1 forced low, immediate update.
+    {
+        mcpwm_dev_t* dev = MCPWM_LL_GET_HW(kGroup);
+        bool ok = true;
+        for (int o = 0; o < 2; ++o) {
+            mcpwm_gen_force_reg_t f;
+            f.val = dev->operators[o].gen_force.val;
+            ok = ok && f.gen_a_cntuforce_mode == 1 && f.gen_b_cntuforce_mode == 1 && f.gen_cntuforce_upmethod == 0;
+            s_panic_force_val[o] = f.val;
+        }
+        s_panic_ready = ok;
+        r.panic_force_ready = ok;
+        r.panic_force_val[0] = s_panic_force_val[0];
+        r.panic_force_val[1] = s_panic_force_val[1];
+    }
     if (!keep(mcpwm_timer_enable(s_timer))) return r;
     if (!keep(mcpwm_timer_start_stop(s_timer, MCPWM_TIMER_START_NO_STOP))) return r;
     s_ready = true;
     return r;
 }
 
-void IRAM_ATTR set_all_permille(uint16_t permille) {
-    if (!s_ready) return;
-    const uint32_t p = permille > 1000 ? 1000u : permille;
-    const uint32_t ticks = p * board::kPwmPeriodTicks / 1000u;
-    for (int i = 0; i < kOutputs; ++i) {
-        mcpwm_comparator_set_compare_value(s_cmpr[i], ticks);  // IRAM with CONFIG_MCPWM_CTRL_FUNC_IN_IRAM, no lock
-    }
-    s_duty = static_cast<uint16_t>(p);
-}
+uint16_t IRAM_ATTR set_all_permille(uint16_t permille) { return s_gate.set_permille(permille); }
 
-// The two generators of an operator share one force register, written read-modify-write.
-// Interrupts are masked on this core for the four writes, so an ISR that forces low (the GPTimer
-// watchdog in a later module) cannot be undone by a release it interrupted.
-void IRAM_ATTR force_low_all() {
-    if (!s_force_ok) return;  // before init the pins are plain GPIO outputs held low (hal_gpio)
-    mcpwm_dev_t* dev = MCPWM_LL_GET_HW(kGroup);
-    const UBaseType_t mask = portSET_INTERRUPT_MASK_FROM_ISR();
-    for (int i = 0; i < kOutputs; ++i) {
-        mcpwm_ll_gen_set_continue_force_level(dev, s_oper_id[i], s_gen_id[i], 0);
-    }
-    portCLEAR_INTERRUPT_MASK_FROM_ISR(mask);
-}
+void IRAM_ATTR force_low_all() { s_gate.force_low_all(); }
 
-void IRAM_ATTR release_all() {
-    if (!s_ready) return;
-    mcpwm_dev_t* dev = MCPWM_LL_GET_HW(kGroup);
-    const UBaseType_t mask = portSET_INTERRUPT_MASK_FROM_ISR();
-    for (int i = 0; i < kOutputs; ++i) {
-        mcpwm_ll_gen_disable_continue_force_action(dev, s_oper_id[i], s_gen_id[i]);
-    }
-    portCLEAR_INTERRUPT_MASK_FROM_ISR(mask);
-}
+bool IRAM_ATTR release_all() { return s_gate.release_all(); }
+
+void IRAM_ATTR hard_cut(uint8_t reason) { s_gate.hard_cut(reason == 0 ? 1 : reason); }
+
+void IRAM_ATTR clear_hard_cut() { s_gate.clear_hard_cut(); }
+
+uint8_t IRAM_ATTR hard_latched() { return s_gate.latched(); }
 
 bool IRAM_ATTR all_forced_low() {
     if (!s_force_ok) return false;
@@ -157,4 +188,21 @@ bool IRAM_ATTR all_forced_low() {
 
 uint16_t duty_permille() { return s_duty; }
 
+bool panic_force_ready() { return s_panic_ready; }
+
 }  // namespace hal_mcpwm
+
+// Panic force-low (M7b, D1b). Linked with -Wl,--wrap=esp_panic_handler (CMakeLists.txt), the same
+// mechanism IDF 5.5.3 uses in components/bt. Every panic (interrupt watchdog, task watchdog with
+// CONFIG_ESP_TASK_WDT_PANIC, abort, exceptions, on either core) enters here first. Minimal by
+// design: in IRAM, two constant register writes captured at init, then the real handler, which
+// prints the backtrace and reboots. Nothing else: no lock, no read-modify-write, no logging.
+extern "C" void __real_esp_panic_handler(void* info);
+extern "C" void IRAM_ATTR __wrap_esp_panic_handler(void* info) {
+    if (hal_mcpwm::s_panic_ready) {
+        mcpwm_dev_t* dev = MCPWM_LL_GET_HW(hal_mcpwm::kGroup);
+        dev->operators[0].gen_force.val = hal_mcpwm::s_panic_force_val[0];
+        dev->operators[1].gen_force.val = hal_mcpwm::s_panic_force_val[1];
+    }
+    __real_esp_panic_handler(info);
+}

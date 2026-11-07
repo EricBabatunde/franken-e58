@@ -1,6 +1,6 @@
 # Franken-E58: Full System Architecture & Implementation Blueprint
 
-**Revision:** 2.10. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
+**Revision:** 2.11. **Status:** the binding reference for all firmware, hardware and test work on the project. Items under §6.1 (Open Items) are not yet decided and carry stated defaults.
 
 This document defines the hardware topography, software architecture and phased development lifecycle for an ESP32-S3-powered, closed-loop stabilised micro-quadcopter built on a Mavic E58 frame. The airframe's original flight controller and MOSFET board are removed completely. Only the camera is retained for now.
 
@@ -181,20 +181,21 @@ Each motor has an independent low-side switch:
 |        <---------------------- telemetry ring (internal SRAM)                        |
 |        <---------------------- ToF slot (seqlock)                                    |
 +--------------------------------------+       +---------------------------------------+
-         GPTimer ISR (IRAM, 5 ms): checks flight_task heartbeat, forces gates low on stall
+  GPTimer watchdog ISR (IRAM, cache-safe; Core 1, level 3, every 500 us; enforced only while ARMED):
+  heartbeat > 5 ms or data-ready > 3 ms -> gates forced low and the hard latch set (M7b)
 ```
 
 **Rules for Core 1**
 
 1. **Single task, single pass.** The whole pipeline runs inside `flight_task`. Splitting it across tasks adds scheduling latency for no benefit. It runs at `configMAX_PRIORITIES - 2`, the highest priority available: the IDF IPC task holds the top priority on each core (M7a).
-2. **Interrupt allocation.** `gpio_install_isr_service()` and the INT handler are installed **from a task pinned to Core 1**, because the interrupt is allocated on the core that registers it. This keeps it off Wi-Fi's core. The ISR (`IRAM_ATTR`) only calls `vTaskNotifyGiveFromISR()`.
+2. **Interrupt allocation.** `gpio_install_isr_service()` and the INT handler are installed **from a task pinned to Core 1**, because the interrupt is allocated on the core that registers it. This keeps it off Wi-Fi's core. The ISR (`IRAM_ATTR`) only calls `vTaskNotifyGiveFromISR()`. **M7b:** Core 1 runs only `flight_task`, IDLE1 and ipc1. Its interrupts are the data-ready GPIO, I²C0, the GPTimer watchdog (level 3), the tick and the cross-core interrupt; the interrupt watchdog uses interrupt 24 (level 4). The FreeRTOS timer task ("Tmr Svc") is unpinned in the IDF 5.5.3 defaults and is pinned to Core 0 (`CONFIG_FREERTOS_TIMER_TASK_AFFINITY_CPU0=y`). The bench firmware prints the task table and `esp_intr_dump()` at every boot.
 3. **No heap allocation after initialisation.** All buffers are static. Monitor `heap_caps_get_free_size()` and the minimum free heap from Core 0.
-4. **No `ESP_LOG`/`printf`** in the loop. Use the binary telemetry ring only. **M7a:** the flight, safety and hal_mcpwm code is placed in IRAM through component linker fragments, and its archives reference no logging, printf, heap or atomic library calls (checked with `nm`). One IDF exception: the I²C master transfer (in flash) logs `ESP_LOGE` on an I²C timeout, reached only on a bus fault.
+4. **No `ESP_LOG`/`printf`** in the loop. Use the binary telemetry ring only. **M7a:** the flight, safety and hal_mcpwm code is placed in IRAM through component linker fragments, and its archives reference no logging, printf, heap or atomic library calls (checked with `nm`). IDF exceptions: the I²C master transfer (in flash) logs `ESP_LOGE` on an I²C timeout, reached only on a bus fault; `i2c_master_bus_reset()` logs on failure, reached only by the IMU recovery while not ARMED (M7b); and `abort()` prints before panicking, reached only by the bench fault key `X` (M7b). M7b extends the IRAM placement and the `nm` check to the `wdt` and `hal_gptimer` components.
 5. **No PSRAM** for flight data or code. Control code is in IRAM or internal flash cache and control data in internal DRAM.
 6. **No flash writes (LittleFS, NVS) while armed.** Flash operations disable the cache and can stall IRAM-unsafe code. Firmware write paths refuse to run in the `ARMED` state.
 7. **Yield properly.** `flight_task` blocks on its notification each cycle, so IDLE1 runs and the task watchdog stays satisfied.
-8. **Hand-offs are lock-free.** SPSC ring for telemetry, seqlock slot for ToF, and for setpoints **one seqlock slot per transport** (UDP task, httpd task), because a seqlock has a single writer: each record carries its receive time (`esp_timer_get_time()`) and a check word, and Core 1 uses the newer of the two (M6). The seqlock reader copies the buffer holding the last complete value even while a write is in progress (write n fills buffer n & 1, never the one being read) and retries only if the writer laps it, so a 50 Hz writer cannot make a 1 kHz reader give up (M7a: 0 give-ups over 13 964 UDP and 10 000 WebSocket writes; the earlier reader, which retried whenever a write was in progress, gave up about once per 10 s, never with a torn record). Each Core 0 writer also wraps its slot write in a Core 0 critical section, one `portMUX_TYPE` per slot, never taken by Core 1 (M7a: held at most 16.6 µs, about 2.5 µs added per write on average); since the reader change it no longer prevents give-ups, and whether to keep it is open. Never share a user-level mutex, semaphore or queue with Core 0. The FreeRTOS kernel spinlock taken by task notifications is unavoidable; its effect on wake-up latency is measured in M3 (Wi-Fi off) and M7 (Wi-Fi on).
-9. **No I2C bus recovery in the flight loop.** A stalled IMU is handled by the missing-data-ready cut trigger (§4.8). Bus recovery by tear-down and rebuild allocates memory, so it is allowed only while DISARMED, never from the flight loop. Investigate `i2c_master_bus_reset()` in M3 as an allocation-free option. Investigated in M3 (ESP-IDF 5.5.3): allocation-free; takes the shared periph_spinlock briefly; on the ESP32-S3 the driver does not wait for the 9-pulse bus clear to finish, so the clear may be cut short; callable only by the task that owns the bus, between transfers. Usable for recovery while DISARMED only.
+8. **Hand-offs are lock-free.** SPSC ring for telemetry, seqlock slot for ToF, and for setpoints **one seqlock slot per transport** (UDP task, httpd task), because a seqlock has a single writer: each record carries its receive time (`esp_timer_get_time()`) and a check word, and Core 1 uses the newer of the two (M6). The seqlock reader copies the buffer holding the last complete value even while a write is in progress (write n fills buffer n & 1, never the one being read) and retries only if the writer laps it, so a 50 Hz writer cannot make a 1 kHz reader give up (M7a: 0 give-ups over 13 964 UDP and 10 000 WebSocket writes; the earlier reader, which retried whenever a write was in progress, gave up about once per 10 s, never with a torn record). The Core 0 writers do not use a critical section (M7b decision D3, `board::kSetpointCriticalSection = false`). A/B over 10 000 frames per transport: 0 give-ups and 0 torn reads on Core 1 with and without it; with it, each write cost 3 to 14 µs more on average and up to 3.9 ms in total under load. Without it, a preempted writer leaves the slot mid-write for up to 1.4 ms, and Core 1 reads the previous complete value meanwhile (one frame old). Never share a user-level mutex, semaphore or queue with Core 0. The FreeRTOS kernel spinlock taken by task notifications is unavoidable; its effect on wake-up latency is measured in M3 (Wi-Fi off) and M7 (Wi-Fi on).
+9. **No I2C bus recovery in the flight loop.** A stalled IMU is handled by the missing-data-ready cut trigger (§4.8). Bus recovery by tear-down and rebuild allocates memory, so it is allowed only while DISARMED, never from the flight loop. Investigate `i2c_master_bus_reset()` in M3 as an allocation-free option. Investigated in M3 (ESP-IDF 5.5.3): allocation-free; takes the shared periph_spinlock briefly; on the ESP32-S3 the driver does not wait for the 9-pulse bus clear to finish, so the clear may be cut short; callable only by the task that owns the bus, between transfers. Usable for recovery while DISARMED only. **M7b recovery (replaces the tear-down and rebuild):** when data-ready has been missing for 50 ms in SAFE or DISARMED, the flight task runs `i2c_master_bus_reset()` and the IMU init (about 104 ms), up to 3 attempts per episode, 1 s apart; never while ARMED (the watchdog cuts first). On success the machine returns to SAFE for a new gyro calibration. When all attempts fail, Core 0 makes a controlled restart, at most 2 per power-on (counted in RTC memory), then holds BOOT with the gates low and reports. Flight firmware never rebuilds the bus. Bench: 67 recoveries, all successful (104 ms), none while ARMED; with the IMU disconnected, 3 failed attempts led to controlled restart 1/2 and a boot that stayed in BOOT with the gates low (`FLIGHT: FAIL`).
 
 ### 4.3 Timing Budget (1 kHz, 1000 µs frame)
 
@@ -203,7 +204,7 @@ Each motor has an independent low-side switch:
 | I²C burst read, 14 B at 400 kHz | 450 µs measured (M2 soak: min 450, avg 450, max 464 µs; wire time about 390 µs plus about 60 µs driver) | $\approx 160\text{ clocks} / 400\text{ kHz}$. A 6-byte gyro-only read is about 260 µs (estimate: 81 clocks, about 200 µs wire time, plus about 60 µs driver overhead; measure before relying on it). **Under Wi-Fi page-serving load (M5):** average 605 to 633 µs, maximum 767 µs (idle AP: 451 µs). **Under latency traffic (M6, 100 frames/s):** UDP 470 to 480 µs, WebSocket 514 to 534 µs average, maximum 778 µs; the M6 setpoint read on Core 1 (from flash) cost 3 µs idle, 8 µs under UDP and 22 µs under WebSocket on average, 97 µs maximum. The margin must be re-checked once the estimator, PID and mixer are measured (R5) |
 | Filters, attitude, PID, mixer | < 150 µs | ESP32-S3 at 240 MHz with single-precision FPU. **To be measured** |
 | MCPWM update plus telemetry enqueue | < 50 µs | **To be measured** with telemetry. M7a (no estimator, PID or telemetry): setpoint read, safety step and MCPWM write add about 5 µs to the burst read (loop work 455.7 µs average against a 451.2 µs burst, idle AP) |
-| ISR-to-task wake-up | 7 µs average, 13 µs maximum measured | M3, Wi-Fi off. M5, Wi-Fi on: 7.0/17 µs average/maximum with the AP idle, 7.9/22 µs under page-serving load. M7a, flight task with Wi-Fi traffic: maximum 15 µs under UDP and 17 µs under WebSocket. M7b repeats it with the full task layout |
+| ISR-to-task wake-up | 7 µs average, 13 µs maximum measured | M3, Wi-Fi off. M5, Wi-Fi on: 7.0/17 µs average/maximum with the AP idle, 7.9/22 µs under page-serving load. M7a, flight task with Wi-Fi traffic: maximum 15 µs under UDP and 17 µs under WebSocket. M7c repeats it with the full task layout |
 | **Margin** | **≥ 350 µs** | Target loop-period jitter p99.9 < 100 µs |
 
 ### 4.4 Signal Chain
@@ -299,9 +300,9 @@ Binary frame, 1 kHz, about 29 kB/s: sync (2 B), `u32 t_us`, `i16 gx,gy,gz`, `i16
 
 ### 4.8 Safety, Arming & Failsafe Specification
 
-**State machine:** `BOOT → SAFE → DISARMED → ARMED → (cut) → DISARMED (latched)`
+**State machine:** `BOOT → SAFE → DISARMED → ARMED → (cut) → DISARMED (latched)`. Also (M7b): `SAFE` or `DISARMED → SAFE` after a successful IMU recovery (new gyro calibration), and `SAFE` or `DISARMED → BOOT` (final) when the restart limit is reached; neither is allowed from `ARMED`.
 
-* **BOOT:** before the outputs and the IMU are initialised; gates forced low. A failed output or IMU init keeps the machine in BOOT.
+* **BOOT:** before the outputs and the IMU are initialised; gates forced low. A failed output or IMU init keeps the machine in BOOT. **M7b:** before the first transfer the I²C0 lines are always clocked 9 times plus a STOP, and a failed IMU init is retried up to 3 times (bus reset, best-effort DEVICE_RESET, 100 ms wait). Bench: 22 resets while ARMED, each back to DISARMED with the IMU initialised on the first attempt; 3 of the 22 found SDA held low and cleared it.
 * **SAFE:** outputs and IMU running, waiting for the gyro calibration and a healthy IMU.
 * Clearing the arm flag disarms (not a cut, not latched). The implementation (M7a) is the pure C++ `safety` component, host-tested.
 
@@ -319,16 +320,17 @@ Binary frame, 1 kHz, about 29 kB/s: sync (2 B), `u32 t_us`, `i16 gx,gy,gz`, `i16
 | Trigger | Provisional threshold |
 |---|---|
 | Control-link silence | **150 ms** |
-| Missing IMU data-ready | > 3 ms since the last interrupt timestamp. Checked on the 1 ms tick, so the decision lands > 3000 and ≤ 4100 µs after the last pulse (M7a bench: 4031 µs); the M7b GPTimer watchdog can tighten it |
+| Missing IMU data-ready | > 3 ms since the last interrupt timestamp, decided by the GPTimer watchdog ISR every 500 µs, so 3.0 to 3.5 ms plus the ISR entry delay (reason `wd_imu_missing`; M7b bench: 42 cuts, 3017 to 3496 µs, gates low 1.43 to 1.91 µs after the decision). Backup check on the flight task's tick at 6 ms (`imu_missing_tick`) |
 | Loop overruns | Counted, with threshold N |
 | Filtered VBAT below cutoff | for > 100 ms (once VBAT cutoff is implemented) |
 | Tilt beyond crash limit | Configurable. Disabled or relaxed on the tether |
 | KILL flag | Immediate |
-| `flight_task` heartbeat stall | > 5 ms, detected by the GPTimer ISR |
+| `flight_task` heartbeat stall | > 5 ms, decided by the GPTimer watchdog ISR, so 5.0 to 5.5 ms plus the ISR entry delay (reason `wd_heartbeat`; M7b bench: 22 cuts, 5008 to 5465 µs, gates low 1.44 to 1.49 µs after the decision) |
+| Watchdog dead | No watchdog alarm for 2 ms: a cut while ARMED and an arm refusal otherwise (`wd_dead`) |
 
-**Cut action:** duty to zero **and** MCPWM generators forced low, then latched. There is **no automatic re-arm**: re-arm needs throttle low plus a fresh explicit arm command.
+**Cut action:** duty to zero **and** MCPWM generators forced low, then latched. There is **no automatic re-arm**: re-arm needs throttle low plus a fresh explicit arm command. **Hard latch (M7b):** a watchdog cut also sets a hardware-path latch in `hal_mcpwm` (`output_gate.h`, host-tested). It is set only by the watchdog ISR and cleared only when the state machine enters ARMED through the normal arm sequence. While it is set, releasing the generators and writing a duty are refused under interrupt masking, so a stalled flight task that resumes cannot re-enable the outputs.
 
-**Other layers:** task watchdog, brownout detector, 10 kΩ gate pull-downs (cover reset, crash and flashing), and a firmware **throttle cap** for tethered work.
+**Other layers:** task watchdog, brownout detector, 10 kΩ gate pull-downs (cover reset, crash and flashing), and a firmware **throttle cap** for tethered work. **M7b:** interrupt watchdog 100 ms with the CPU1 tick watched; task watchdog 2 s **with panic**, watching IDLE0 and IDLE1. Every panic forces the gates low before anything prints: `esp_panic_handler` is wrapped (`-Wl,--wrap`) by an IRAM function that writes two constant MCPWM force registers, then calls the real handler. Bench (3 trials each): interrupts-masked hang (`H`) → `INT_WDT` reset 1.40 to 1.44 s after the hang; starved idle (`T`) → `TASK_WDT` reset 3.21 s; `abort()` (`X`) → `PANIC` reset 1.21 s; each reboot came up DISARMED. The time to the panic itself, which is when the gates go low, is not measured directly: `H` exceeds `X` (same print and reboot) by about 0.2 s, so an interrupts-masked hang on Core 1 leaves the outputs driven for about 0.2 s, not the 0.1 s timeout (verify against IDF docs: interrupt watchdog with CPU1 checking). The GPTimer watchdog cannot cover this case, since its level 3 is masked too.
 
 ### 4.9 `sdkconfig.defaults` Targets
 
@@ -344,7 +346,10 @@ Names are verified against the pinned IDF version during Module 1 (via `menuconf
 * `CONFIG_COMPILER_OPTIMIZATION_PERF=y`, 240 MHz CPU (`CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y`)
 * Flash mode **DIO at 80 MHz** (`CONFIG_ESPTOOLPY_FLASHMODE_DIO=y`): this board's flash chip is detected as generic and the bootloader cannot set its QIO enable bit
 * Brownout detector enabled, with the level chosen by measurement
-* Task watchdog enabled, with a timeout tuned in Module 7
+* Watchdogs (M7b): `CONFIG_ESP_INT_WDT=y`, `CONFIG_ESP_INT_WDT_TIMEOUT_MS=100`, `CONFIG_ESP_INT_WDT_CHECK_CPU1=y`; `CONFIG_ESP_TASK_WDT_INIT=y`, `CONFIG_ESP_TASK_WDT_TIMEOUT_S=2`, `CONFIG_ESP_TASK_WDT_PANIC=y` (off by default in 5.5.3: a timeout only printed), `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y`, `..._CPU1=y`; `CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y`
+* GPTimer watchdog (M7b): `CONFIG_GPTIMER_ISR_HANDLER_IN_IRAM=y`, `CONFIG_GPTIMER_ISR_CACHE_SAFE=y` (the interrupt stays enabled while the flash cache is off)
+* `CONFIG_FREERTOS_TIMER_TASK_AFFINITY_CPU0=y` (M7b)
+* Bench-only overlay `sdkconfig.defaults.bench` (environment `esp32s3_bench`): `CONFIG_FREERTOS_USE_TRACE_FACILITY=y` for the task table; never in flight firmware
 * 16 MB flash, octal PSRAM, custom partition table (factory app plus a LittleFS partition of about 1 MB)
 
 ### 4.10 Repository Layout
@@ -384,7 +389,8 @@ franken-e58/
 | M5 | LittleFS mount, AP bring-up, static file serving | Page served at `http://192.168.4.1` on the fixed channel. Footprint noted. IMU under Wi-Fi (AP idle and under page-serving load): zero missed samples and I²C errors, interval sd < 2 µs, jitter < 20 µs, wake-up max < 50 µs. No runtime flash writes |
 | M6 | WebSocket and UDP latency harness | p95 < 15 ms, p99 < 20 ms one-way. Histograms for both transports. Decides whether UDP becomes the primary control path (R3). IMU loop alongside: zero missed samples and I²C errors, interval sd < 2 µs, jitter < 20 µs, wake-up max < 50 µs. Setpoint hand-off: no torn record reaches Core 1. Heap within 2 KB of idle after more than 10 000 frames per transport. **Passed 3 November 2026** |
 | M7a | Motor-output layer (MCPWM, forced low), arming and failsafe state machine, link-loss, kill and missing-IMU cuts. No motors connected; bench duty cap 200 permille | Gates low within the 150 ms rule when the link is pulled (≥ 20 trials per transport, decision 150 to 152 ms, force-low < 50 µs). Kill < 2 ms. Missing data-ready > 3000 and ≤ 4100 µs. Every arm refusal reason seen. IMU loop alongside as in M6. **Passed 4 November 2026:** 40 link-loss trials 150.02 to 150.97 ms, force-low 1.48 µs; kill 991 µs; missing data-ready 4031 µs |
-| M7b | Task layout, core pinning, GPTimer heartbeat watchdog | Loop jitter p99.9 < 100 µs. Core 1 never touches Wi-Fi locks |
+| M7b | Safety mechanisms: GPTimer heartbeat and data-ready watchdog with hard latch, interrupt and task watchdogs with panic force-low, task layout and core pinning, IMU recovery and boot retry | Watchdog cuts 5.0 to 5.5 ms (heartbeat) and 3.0 to 3.5 ms (data-ready) plus entry delay, force-low < 50 µs, ≥ 20 trials each. `H`, `T`, `X` reset with the right reason and come up DISARMED. ≥ 20 resets while ARMED, none stuck. Core 1 runs only flight, IDLE1, ipc1. Recovery never while ARMED. 10 minutes ARMED under traffic with no cut or reset. **Passed 7 November 2026:** heartbeat 22 cuts 5008 to 5465 µs; data-ready 42 cuts 3017 to 3496 µs; force-low ≤ 1.91 µs; 22 armed resets all DISARMED; 688 s ARMED with no cut or reset. Details: `docs/M7b_package.md` |
+| M7c | Timing under load: latency histograms, 150 µs synthetic load, jitter per condition, R5 experiment builds, 20-minute soak | Loop jitter p99.9 < 100 µs. Core 1 never touches Wi-Fi locks. Spec pending |
 
 ### Phase 2: Schematic Capture & PCB Design
 

@@ -30,6 +30,12 @@ void RestDetector::restart() {
     }
 }
 
+void RestDetector::reset() {
+    const uint32_t restarts = cal_restarts_;
+    *this = RestDetector(cfg_);
+    cal_restarts_ = restarts;
+}
+
 void RestDetector::sample(int64_t now_us, const float g[3], const float a[3]) {
     const float a2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
 

@@ -1,0 +1,6 @@
+# Output layer (M7a, M7b): every function, including the OutputGate template instances and the
+# panic wrapper, in IRAM. init() runs once and would not need it; the cost is small.
+[mapping:hal_mcpwm]
+archive: libhal_mcpwm.a
+entries:
+    * (noflash)

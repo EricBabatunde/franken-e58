@@ -12,6 +12,8 @@ bool flash_writes_allowed() {
     return flash_writes_allowed(static_cast<State>(s_published.load(std::memory_order_acquire)));
 }
 
+State published_state() { return static_cast<State>(s_published.load(std::memory_order_acquire)); }
+
 void Machine::emit(Outputs* out, const Event& e) {
     if (out->n_events < 2) {
         out->events[out->n_events] = e;
@@ -46,6 +48,7 @@ uint16_t Machine::blocking(const Inputs& in, bool fresh) const {
     if (!fresh) m |= bit(Refusal::kNoLink);
     if (fresh && (in.flags & kFlagKill)) m |= bit(Refusal::kKill);
     if (!in.imu_healthy || in.imu_missing) m |= bit(Refusal::kImuUnhealthy);
+    if (!in.wd_alive) m |= bit(Refusal::kWdDead);
     if (!in.gyro_cal_done) m |= bit(Refusal::kGyroCal);
     if (!in.accel_ok) m |= bit(Refusal::kAccelBad);
     if (in.accel_ok && !in.tilt_ok) m |= bit(Refusal::kTilted);
@@ -103,12 +106,17 @@ void Machine::step(const Inputs& in, Outputs* out) {
     base.throttle = thr;
     base.flags = in.flags;
 
-    // ---- ARMED: cut triggers, in order KILL, missing IMU, link silence; then the arm flag.
+    // ---- ARMED: cut triggers, in order: watchdog hard latch (the gates are already low), KILL,
+    // watchdog dead, missing IMU (backup tick check), link silence; then the arm flag.
     if (state_ == State::kArmed) {
         Cut c = Cut::kNone;
-        if (fresh && (in.flags & kFlagKill)) {
+        if (in.hard_cut != 0) {
+            c = in.hard_cut == kHardImuMissing ? Cut::kWdImuMissing : Cut::kWdHeartbeat;
+        } else if (fresh && (in.flags & kFlagKill)) {
             c = Cut::kKill;
-        } else if (in.imu_missing) {
+        } else if (!in.wd_alive) {
+            c = Cut::kWdDead;
+        } else if (in.imu_missing_cut) {
             c = Cut::kImuMissing;
         } else if (silent) {
             c = Cut::kLinkSilence;
@@ -193,6 +201,46 @@ void Machine::step(const Inputs& in, Outputs* out) {
     set_outputs(in, out);
 }
 
+bool Machine::to_safe(int64_t now_us, Outputs* out) {
+    out->n_events = 0;
+    if (state_ == State::kArmed) return false;
+    if (state_ == State::kDisarmed) {
+        Event e;
+        e.kind = EventKind::kState;
+        e.from = State::kDisarmed;
+        e.to = State::kSafe;
+        e.t_us = now_us;
+        state_ = State::kSafe;
+        emit(out, e);
+    }
+    out->state = state_;
+    out->outputs_allowed = false;
+    out->force_low = true;
+    out->duty_permille = 0;
+    out->latched = latched_;
+    return true;
+}
+
+bool Machine::to_boot(int64_t now_us, Outputs* out) {
+    out->n_events = 0;
+    if (state_ == State::kArmed) return false;
+    if (state_ != State::kBoot) {
+        Event e;
+        e.kind = EventKind::kState;
+        e.from = state_;
+        e.to = State::kBoot;
+        e.t_us = now_us;
+        state_ = State::kBoot;
+        emit(out, e);
+    }
+    out->state = state_;
+    out->outputs_allowed = false;
+    out->force_low = true;
+    out->duty_permille = 0;
+    out->latched = latched_;
+    return true;
+}
+
 const char* name(State s) {
     switch (s) {
         case State::kBoot:     return "BOOT";
@@ -208,7 +256,10 @@ const char* name(Cut c) {
         case Cut::kNone:        return "none";
         case Cut::kLinkSilence: return "link_silence";
         case Cut::kKill:        return "kill";
-        case Cut::kImuMissing:  return "imu_missing";
+        case Cut::kImuMissing:  return "imu_missing_tick";
+        case Cut::kWdHeartbeat: return "wd_heartbeat";
+        case Cut::kWdImuMissing: return "wd_imu_missing";
+        case Cut::kWdDead:      return "wd_dead";
     }
     return "?";
 }
@@ -221,6 +272,7 @@ const char* name(Refusal r) {
         case Refusal::kKill:           return "kill";
         case Refusal::kNoArmEdge:      return "arm_held_no_edge";
         case Refusal::kImuUnhealthy:   return "imu_unhealthy";
+        case Refusal::kWdDead:         return "wd_dead";
         case Refusal::kGyroCal:        return "gyro_cal";
         case Refusal::kAccelBad:       return "accel_bad";
         case Refusal::kTilted:         return "tilted";

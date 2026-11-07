@@ -1,0 +1,5 @@
+# GPTimer heartbeat watchdog (M7b): the ISR body and the heartbeat store in IRAM.
+[mapping:wdt]
+archive: libwdt.a
+entries:
+    * (noflash)

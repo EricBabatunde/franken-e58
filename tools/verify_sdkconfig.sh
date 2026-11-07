@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
-# Confirms every CONFIG_ line in sdkconfig.defaults survived into the generated sdkconfig.
+# Confirms every CONFIG_ line in the defaults file(s) survived into the generated sdkconfig.
 # Unknown option names are silently dropped by Kconfig, so this check is mandatory.
-# Usage: tools/verify_sdkconfig.sh [generated_file]   (default: sdkconfig.esp32s3)
+# Usage: tools/verify_sdkconfig.sh [generated_file [defaults_file ...]]
+#   default:     sdkconfig.esp32s3 checked against sdkconfig.defaults
+#   bench (M7b): tools/verify_sdkconfig.sh sdkconfig.esp32s3_bench sdkconfig.defaults sdkconfig.defaults.bench
 set -u
 gen="${1:-sdkconfig.esp32s3}"
+shift || true
+defaults=("$@")
+[ ${#defaults[@]} -eq 0 ] && defaults=(sdkconfig.defaults)
 [ -f "$gen" ] || { echo "Generated file $gen not found. Run 'pio run' first."; exit 2; }
 bad=0
-while IFS= read -r line; do
-  key="${line%%=*}"
-  val="${line#*=}"
-  if [ "$val" = "n" ]; then want="# $key is not set"; else want="$line"; fi
-  if grep -qxF "$want" "$gen"; then
-    echo "OK        $line"
-  else
-    echo "MISMATCH  $line"
-    bad=1
-  fi
-done < <(grep -E '^CONFIG_' sdkconfig.defaults)
+n=0
+for d in "${defaults[@]}"; do
+  [ -f "$d" ] || { echo "Defaults file $d not found."; exit 2; }
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    val="${line#*=}"
+    if [ "$val" = "n" ]; then want="# $key is not set"; else want="$line"; fi
+    n=$((n + 1))
+    if grep -qxF "$want" "$gen"; then
+      echo "OK        $line"
+    else
+      echo "MISMATCH  $line   ($d)"
+      bad=1
+    fi
+  done < <(grep -E '^CONFIG_' "$d")
+done
+if [ $bad -eq 0 ]; then echo "verify_sdkconfig: $gen: $n/$n OK"; else echo "verify_sdkconfig: $gen: MISMATCH"; fi
 exit $bad

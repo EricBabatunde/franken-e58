@@ -5,6 +5,7 @@
 #include "esp_err.h"
 #include "hal_i2c.h"
 #include "safety.h"
+#include "wdt.h"
 
 // Flight task (blueprint 4.2), Core 1, configMAX_PRIORITIES - 2 (the IPC task holds the top
 // priority on each core). Woken by the MPU-6500 data-ready interrupt exactly as in M3:
@@ -12,6 +13,11 @@
 // No estimator, filters or PID yet (M7a). When ARMED all four outputs follow the throttle,
 // scaled by board::kBenchDutyCapPermille. After init: no logging, no heap, no lock shared with
 // Core 0. Everything Core 0 prints arrives through seqlock slots. Code placed in IRAM (linker.lf).
+//
+// M7b: the task starts the GPTimer heartbeat watchdog (wdt, interrupt on Core 1), stores its
+// heartbeat every iteration, turns the watchdog hard latch into a safety cut, clears the latch
+// only on entering ARMED, recovers the IMU while SAFE or DISARMED, retries the IMU init at boot
+// (board::kImuBootRetry) and runs the console fault injections.
 namespace flight {
 
 constexpr int kEventLog = 16;
@@ -20,6 +26,10 @@ struct EventRecord {
     safety::Event ev;
     int64_t t_force_us = 0;      // esp_timer just after force_low_all() (cuts and disarms), else 0
     uint32_t force_cycles = 0;   // CPU cycles from the decision to the force-low being written
+    // Watchdog cuts (wd_heartbeat, wd_imu_missing): the ISR's own record (32-bit esp_timer times).
+    uint32_t wd_decide_us = 0;   // ISR decision time (the force is written in the same ISR)
+    uint32_t wd_ref_us = 0;      // last heartbeat or last data-ready pulse
+    uint32_t wd_force_cycles = 0;
 };
 
 // Ring of the latest events: record of event n is rec[(n - 1) % kEventLog]; count = newest seq.
@@ -67,6 +77,28 @@ struct Window {
     uint32_t sp_retries_max = 0;
     uint32_t sp_torn = 0;               // check word mismatch (must stay 0)
     uint32_t armed_iterations = 0;
+    // M7b watchdog ISR cost in this window.
+    wdt::IsrWindow wd;
+};
+
+// M7b IMU recovery attempts (SAFE or DISARMED only).
+struct RecoveryRecord {
+    uint32_t seq = 0;
+    int64_t t_us = 0;
+    safety::State state = safety::State::kBoot;  // state when the attempt started (never ARMED)
+    uint32_t attempt = 0;        // 1 to board::kRecoveryAttempts within the episode
+    uint32_t missing_us = 0;     // data-ready missing for this long when the attempt started
+    esp_err_t bus_reset_err = ESP_OK;
+    drv_mpu6500::Step step = drv_mpu6500::Step::kNone;
+    esp_err_t init_err = ESP_OK;
+    uint8_t who_am_i = 0;
+    uint32_t duration_us = 0;    // bus reset plus the full IMU init sequence
+    bool ok = false;
+};
+constexpr int kRecoveryLog = 8;
+struct RecoveryLog {
+    uint32_t count = 0;          // record n is rec[(n - 1) % kRecoveryLog]
+    RecoveryRecord rec[kRecoveryLog];
 };
 
 struct Status {
@@ -106,16 +138,30 @@ struct Status {
     uint32_t sp_retries_max = 0;
     uint32_t i2c_errors = 0;
     bool flash_ok = true;
+    // M7b.
+    uint8_t hard_latched = 0;        // watchdog hard latch (0: clear)
+    bool wd_alive = true;
+    uint32_t wd_count = 0;           // watchdog alarms handled (wraps)
+    uint32_t rec_attempts = 0;       // IMU recovery attempts since boot
+    uint32_t rec_ok = 0;
+    uint32_t rec_episode = 0;        // attempts in the current episode
+    bool rec_exhausted = false;      // board::kRecoveryAttempts failed: Core 0 decides restart or BOOT
 };
 
 struct StartReport {
     bool done = false;
     esp_err_t bus_err = ESP_OK;
     hal_i2c::LineCheck bus_lines;
-    drv_mpu6500::InitStatus init;
+    drv_mpu6500::InitStatus init;     // the last attempt
     esp_err_t int_err = ESP_OK;
     bool ok = false;
     uint32_t stack_free = 0;
+    // M7b boot retry: every attempt (1 unless board::kImuBootRetry).
+    uint32_t attempts = 0;
+    drv_mpu6500::InitStatus attempt[3];
+    esp_err_t retry_bus_reset_err[3] = {ESP_OK, ESP_OK, ESP_OK};
+    esp_err_t retry_soft_reset_err[3] = {ESP_OK, ESP_OK, ESP_OK};
+    wdt::StartReport wdt;
 };
 
 // Starts the task on Core 1 and waits (up to 3 s) for its init. `outputs_ok`: hal_mcpwm::init()
@@ -127,6 +173,25 @@ bool window(Window* out, uint32_t* seq);  // seq increments with every completed
 bool events(EventLog* out);
 
 // Bench fault injection: Core 1 disables (false) or restores (true) the data-ready interrupt.
+// While disabled, IMU recovery is suppressed (the injection is deliberate).
 void request_imu_int(bool enabled);
+
+// M7b bench fault injection (console keys only; never reachable from the network). The flight
+// task acts on the request between the safety decision and the output write.
+enum class Fault : uint8_t {
+    kNone = 0,
+    kStallShort,   // 'h': busy wait board::kFaultStallShortUs, interrupts on
+    kStallMasked,  // 'H': busy wait board::kFaultStallMaskedUs, interrupts masked on Core 1
+    kStallLong,    // 'T': busy wait board::kFaultStallLongUs, interrupts on (task watchdog)
+    kAbort,        // 'X': abort()
+    kImuSleep,     // 'z': put the IMU to sleep (data-ready stops; recovery test)
+};
+void request_fault(Fault f);
+
+bool recovery_log(RecoveryLog* out);
+
+// Core 0, after rec_exhausted and the restart limit (board::kRestartLimit): the machine goes to
+// BOOT (gates low, final) unless ARMED.
+void request_boot_state();
 
 }  // namespace flight

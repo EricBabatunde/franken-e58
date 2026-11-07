@@ -1,0 +1,5 @@
+# Bench-only overlay (M7b), applied after sdkconfig.defaults by [env:esp32s3_bench] in
+# platformio.ini. Never part of a flight build.
+
+# uxTaskGetSystemState() for the boot task table (every task, its core, priority and stack)
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y

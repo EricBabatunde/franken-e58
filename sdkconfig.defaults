@@ -50,3 +50,26 @@ CONFIG_HTTPD_WS_SUPPORT=y
 # the Core 1 flight task and must be IRAM-safe. (The blueprint's CONFIG_MCPWM_ISR_IRAM_SAFE is
 # CONFIG_MCPWM_ISR_CACHE_SAFE in IDF 5.5.3 and is not needed: no MCPWM interrupts are used.)
 CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y
+
+# M7b watchdogs (decisions D1, D1b; blueprint 4.2, 4.8). Interrupt watchdog 100 ms with the CPU1
+# tick watched: covers a Core 1 hang with interrupts masked, which the Core 1 GPTimer watchdog
+# cannot see. Task watchdog 2 s with panic (without it a task watchdog timeout only prints), on
+# both idle tasks. Panics print the backtrace and reboot; the panic wrapper in hal_mcpwm forces the
+# gates low first.
+CONFIG_ESP_INT_WDT=y
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=100
+CONFIG_ESP_INT_WDT_CHECK_CPU1=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=2
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+# GPTimer default ISR in IRAM (the IDF default, set explicitly for the watchdog)
+CONFIG_GPTIMER_ISR_HANDLER_IN_IRAM=y
+# Watchdog interrupt allocated with ESP_INTR_FLAG_IRAM, so it keeps running while the flash cache
+# is disabled (M7b: up to 902 us late while DISARMED without it). The callback and all it touches
+# must be in IRAM/DRAM. Verify against IDF docs (gptimer Kconfig, 5.5.3).
+CONFIG_GPTIMER_ISR_CACHE_SAFE=y
+# FreeRTOS timer service task ("Tmr Svc") pinned to Core 0: unpinned it may run on Core 1 (M7b)
+CONFIG_FREERTOS_TIMER_TASK_AFFINITY_CPU0=y

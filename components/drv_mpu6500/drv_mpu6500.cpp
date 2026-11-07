@@ -25,6 +25,7 @@ constexpr uint8_t kRegWhoAmI = 0x75;        // RM p.44
 // Values.
 constexpr uint8_t kWhoAmI = 0x70;              // RM p.44
 constexpr uint8_t kPwrDeviceReset = 0x80;      // PWR_MGMT_1.DEVICE_RESET, self-clearing (RM p.41)
+constexpr uint8_t kPwrSleep = 0x41;            // SLEEP = 1, CLKSEL = 1 (RM p.41; verify against datasheet)
 constexpr uint8_t kPwrAfterReset = 0x01;       // SLEEP = 0, CLKSEL = 1 (RM p.9, p.41). Never write 0x00.
 constexpr uint8_t kIntPinCfg = 0x10;           // push-pull, active high, 50 us pulse, INT_ANYRD_2CLEAR (RM p.29)
 constexpr uint8_t kIntEnableRawRdy = 0x01;     // RAW_RDY_EN (RM p.30)
@@ -259,7 +260,19 @@ esp_err_t int_install(TaskHandle_t task) {
 void int_enable(bool enabled) { hal_gpio::imu_int_enable(enabled); }
 
 uint32_t raw_pulses() { return s_raw_count.load(kRelaxed); }
-uint32_t last_notify_us() { return s_notify_ts.load(std::memory_order_acquire); }
+// IRAM: also read by the GPTimer watchdog ISR (M7b).
+uint32_t IRAM_ATTR last_notify_us() { return s_notify_ts.load(std::memory_order_acquire); }
+
+esp_err_t sleep() {
+    if (!s_have_dev) return ESP_ERR_INVALID_STATE;
+    // SLEEP = 1, CLKSEL = 1 (RM p.41): sensors stop, so data-ready stops (bench injection, M7b).
+    return hal_i2c::write_reg8(s_dev, kRegPwrMgmt1, kPwrSleep, kTimeoutMs);
+}
+
+esp_err_t soft_reset() {
+    if (!s_have_dev) return ESP_ERR_INVALID_STATE;
+    return hal_i2c::write_reg8(s_dev, kRegPwrMgmt1, kPwrDeviceReset, kTimeoutMs);
+}
 
 #if FE_IMU_ISR_INSTRUMENT
 void isr_set_notify_every(uint32_t n) { s_notify_every.store(n, kRelaxed); }

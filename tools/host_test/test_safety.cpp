@@ -1,5 +1,7 @@
-// Host unit test for components/safety (M7a): the arming and failsafe state machine and the
-// rest detector. Same sources as the firmware, same thresholds (board_config.h is plain C++).
+// Host unit test for components/safety (M7a, extended in M7b): the arming and failsafe state
+// machine and the rest detector. Same sources as the firmware, same thresholds (board_config.h is
+// plain C++). M7b adds the watchdog hard latch: Sim models the latch the way the firmware drives it
+// (set by the watchdog ISR, cleared only by the flight task when the machine enters ARMED).
 // Build and run (docs/M7a_package.md, D-M7a-05):
 //   g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/safety/include -Icomponents/board_config/include
 //       components/safety/safety.cpp components/safety/rest.cpp tools/host_test/test_safety.cpp
@@ -47,6 +49,11 @@ struct Sim {
     uint16_t throttle = 0;
     uint8_t flags = 0;
     uint8_t transport = 0;
+    // M7b hard-latch model. `hard`: the hal_mcpwm latch (0: clear). `isr_model`: before each step,
+    // the watchdog ISR sets it when the published state is ARMED and data-ready is missing.
+    uint8_t hard = 0;
+    bool isr_model = false;
+    State published = State::kBoot;
 
     Sim() {
         in.imu_healthy = in.gyro_cal_done = in.at_rest = in.accel_ok = in.tilt_ok = true;
@@ -70,7 +77,14 @@ struct Sim {
             now += dt;
             if (sending && now - last_send >= 20000) frame();
             in.now_us = now;
+            if (isr_model && published == State::kArmed && hard == 0 && in.imu_missing) hard = kHardImuMissing;
+            in.hard_cut = hard;
             m.step(in, &out);
+            for (int i = 0; i < out.n_events; ++i) {
+                // flight.cpp: the latch is cleared only in the iteration that enters ARMED.
+                if (out.events[i].kind == EventKind::kState && out.events[i].to == State::kArmed) hard = 0;
+            }
+            published = out.state;
             collect();
             invariants();
         }
@@ -81,6 +95,9 @@ struct Sim {
             check(out.force_low && out.duty_permille == 0, "forced low with zero duty outside ARMED");
         }
         check(out.duty_permille <= board::kBenchDutyCapPermille, "duty never above the bench cap");
+        // M7b: with the hard latch set the machine is never ARMED after a step (the gate in hal_mcpwm
+        // also refuses any output while it is set; tools/host_test/test_output_gate.cpp).
+        if (hard != 0) check(out.state != State::kArmed, "never ARMED while the hard latch is set");
     }
     // Arm flag low with throttle 0 for 700 ms, then the arm edge, then 100 ms.
     void arm_sequence(uint16_t thr_after = 0) {
@@ -168,6 +185,7 @@ void test_each_condition_alone() {
         {"tilted", [](Sim& s) { s.in.tilt_ok = false; }, Refusal::kTilted},
         {"moving", [](Sim& s) { s.in.at_rest = false; }, Refusal::kMoving},
         {"kill flag", [](Sim& s) { s.flags |= kFlagKill; }, Refusal::kKill},
+        {"watchdog dead", [](Sim& s) { s.in.wd_alive = false; }, Refusal::kWdDead},
     };
     for (const Row& r : rows) {
         Sim s = disarmed();
@@ -373,13 +391,19 @@ void test_kill_and_imu() {
     {
         Sim s = disarmed();
         s.arm_sequence(400);
+        // M7b: data-ready missing for 3 ms (health input) is cut by the watchdog ISR, not by the
+        // machine; the machine's own cut is the backup tick check (imu_missing_cut, > 6 ms).
         s.in.imu_missing = true;
-        const int64_t last_pulse = s.now - 2001;
+        s.run(3000);
+        check(s.out.state == State::kArmed, "missing data-ready alone (no ISR, no backup flag): the machine does not cut");
+        s.in.imu_missing_cut = true;
+        const int64_t last_pulse = s.now - 5001;
         s.in.imu_last_us = last_pulse;
         s.run(1000);
         const Event* e = s.last(EventKind::kCut);
-        check(s.out.state == State::kDisarmed && e && e->cut == Cut::kImuMissing, "missing data-ready: cut, imu_missing");
-        check(e && e->imu_last_us == last_pulse && e->t_us - last_pulse == 3001, "missing data-ready: last pulse time recorded");
+        check(s.out.state == State::kDisarmed && e && e->cut == Cut::kImuMissing, "backup check: cut, imu_missing_tick");
+        check(std::string(name(Cut::kImuMissing)) == "imu_missing_tick", "backup cut named imu_missing_tick");
+        check(e && e->imu_last_us == last_pulse && e->t_us - last_pulse == 6001, "backup check: last pulse time recorded");
     }
 }
 
@@ -424,10 +448,13 @@ void test_latch_and_rearm() {
 void test_random() {
     std::mt19937 rng(12345);
     Sim s = disarmed();
+    s.isr_model = true;
+    int hard_injections = 0;
     long armed_steps = 0, steps = 0;
     for (int episode = 0; episode < 3000; ++episode) {
         if (rng() % 2 == 0) {
-            s.in.imu_missing = false;
+            s.in.imu_missing = s.in.imu_missing_cut = false;
+            s.in.wd_alive = true;
             s.in.imu_healthy = s.in.at_rest = s.in.tilt_ok = s.in.accel_ok = s.in.gyro_cal_done = true;
             s.sending = true;
             s.arm_sequence(static_cast<uint16_t>(rng() % 1100));
@@ -439,6 +466,12 @@ void test_random() {
             if (r % 53 == 0) s.flags = static_cast<uint8_t>(rng() & 0x07);
             if (r % 41 == 0) s.throttle = static_cast<uint16_t>(rng() % 1400);
             if (r % 211 == 0) s.in.imu_missing = !s.in.imu_missing;
+            if (r % 223 == 0) s.in.imu_missing_cut = !s.in.imu_missing_cut;
+            if (r % 613 == 0 && s.published == State::kArmed && s.hard == 0) {
+                s.hard = kHardHeartbeat;  // the ISR saw a stalled heartbeat
+                hard_injections++;
+            }
+            if (r % 709 == 0) s.in.wd_alive = !s.in.wd_alive;
             if (r % 307 == 0) s.in.imu_healthy = !s.in.imu_healthy;
             if (r % 401 == 0) s.in.at_rest = !s.in.at_rest;
             if (r % 503 == 0) s.in.tilt_ok = !s.in.tilt_ok;
@@ -448,13 +481,139 @@ void test_random() {
             armed_steps += s.out.state == State::kArmed;
             if (s.out.state == State::kArmed) {
                 check(!s.in.imu_missing, "random: never ARMED with data-ready missing");
+                check(!s.in.imu_missing_cut, "random: never ARMED with the backup check tripped");
+                check(s.hard == 0, "random: never ARMED with the hard latch set");
+                check(s.in.wd_alive, "random: never ARMED with the watchdog dead");
                 check(s.now - s.in.sp_rx_us <= board::kLinkSilenceCutUs, "random: never ARMED with a silent link");
             }
         }
     }
     check(armed_steps > 0 && armed_steps < steps, "random: both ARMED and not ARMED were exercised");
-    std::printf("random run: %ld of %ld disturbed iterations ARMED, %d cuts, %d refusals, %zu events\n",
-                armed_steps, steps, s.count(EventKind::kCut), s.count(EventKind::kRefusal), s.events.size());
+    int wd_cuts = 0;
+    for (const Event& e : s.events) {
+        wd_cuts += e.kind == EventKind::kCut && (e.cut == Cut::kWdHeartbeat || e.cut == Cut::kWdImuMissing);
+    }
+    check(wd_cuts > 0, "random: watchdog cuts were exercised");
+    std::printf("random run: %ld of %ld disturbed iterations ARMED, %d cuts (%d watchdog, %d heartbeat injections),"
+                " %d refusals, %zu events\n",
+                armed_steps, steps, s.count(EventKind::kCut), wd_cuts, hard_injections, s.count(EventKind::kRefusal),
+                s.events.size());
+}
+
+// M7b watchdog hard latch, watchdog dead, and the recovery rules.
+void test_watchdog() {
+    // a. A watchdog cut while ARMED (heartbeat): cut with its own reason, latched, forced low.
+    {
+        Sim s = disarmed();
+        s.arm_sequence(400);
+        check(s.out.state == State::kArmed && !s.out.force_low, "watchdog: armed at throttle 400 before the cut");
+        s.hard = kHardHeartbeat;
+        s.run(1000);
+        const Event* e = s.last(EventKind::kCut);
+        check(s.out.state == State::kDisarmed && s.out.latched && e && e->cut == Cut::kWdHeartbeat,
+              "watchdog heartbeat: cut wd_heartbeat, latched");
+        check(s.out.force_low && s.out.duty_permille == 0, "watchdog heartbeat: forced low, duty 0");
+        check(std::string(name(Cut::kWdHeartbeat)) == "wd_heartbeat", "name wd_heartbeat");
+        // b. The stalled task resumes with the arm flag still high and throttle 400: no re-arm, the
+        //    latch stays set (only entering ARMED clears it), so no output can be released.
+        s.run(5000000);
+        check(s.out.state == State::kDisarmed && s.hard != 0, "after the stall: no re-arm over 5 s, hard latch still set");
+        // d. Re-arm: throttle high plus a fresh edge refused; throttle low plus a fresh edge arms and
+        //    clears the latch.
+        s.throttle = 400;
+        s.flags = 0;
+        s.run(100000);
+        s.flags = kFlagArm;
+        s.run(100000);
+        check(s.out.state == State::kDisarmed && s.hard != 0, "re-arm with throttle high: refused, latch kept");
+        s.throttle = 0;
+        s.flags = 0;
+        s.run(700000);
+        s.flags = kFlagArm;
+        s.run(40000);
+        check(s.out.state == State::kArmed && s.hard == 0 && !s.out.latched,
+              "re-arm with throttle low and a fresh edge: ARMED, hard latch cleared");
+    }
+    // The ISR's data-ready reason, and priority over KILL (the gates are already low).
+    {
+        Sim s = disarmed();
+        s.arm_sequence(400);
+        s.hard = kHardImuMissing;
+        s.flags = kFlagArm | kFlagKill;
+        s.run(1000);
+        const Event* e = s.last(EventKind::kCut);
+        check(e && e->cut == Cut::kWdImuMissing, "watchdog data-ready: cut wd_imu_missing, before kill");
+        check(std::string(name(Cut::kWdImuMissing)) == "wd_imu_missing", "name wd_imu_missing");
+    }
+    // ISR model end to end: ARMED, data-ready stops, the ISR latches, the machine cuts.
+    {
+        Sim s = disarmed();
+        s.isr_model = true;
+        s.arm_sequence(400);
+        s.in.imu_missing = true;
+        s.run(2000);
+        const Event* e = s.last(EventKind::kCut);
+        check(s.out.state == State::kDisarmed && e && e->cut == Cut::kWdImuMissing && s.hard == kHardImuMissing,
+              "ISR model: missing data-ready while ARMED cuts through the latch");
+    }
+    // A hard latch left over while DISARMED does not block the normal arm sequence, which clears it.
+    {
+        Sim s = disarmed();
+        s.hard = kHardHeartbeat;
+        s.arm_sequence(0);
+        check(s.out.state == State::kArmed && s.hard == 0, "latch while DISARMED: cleared by the normal arm sequence");
+    }
+    // Watchdog dead: a cut while ARMED, a refusal while DISARMED.
+    {
+        Sim s = disarmed();
+        s.arm_sequence(400);
+        s.in.wd_alive = false;
+        s.run(1000);
+        const Event* e = s.last(EventKind::kCut);
+        check(s.out.state == State::kDisarmed && e && e->cut == Cut::kWdDead, "watchdog dead while ARMED: cut wd_dead");
+        check((s.out.blocking & bit(Refusal::kWdDead)) != 0, "watchdog dead: blocking mask holds wd_dead");
+    }
+    // e. Recovery forbidden while ARMED.
+    {
+        check(!recovery_allowed(State::kArmed), "recovery not allowed in ARMED");
+        check(!recovery_allowed(State::kBoot), "recovery not allowed in BOOT");
+        check(recovery_allowed(State::kSafe) && recovery_allowed(State::kDisarmed), "recovery allowed in SAFE and DISARMED");
+        Sim s = disarmed();
+        s.arm_sequence(400);
+        Outputs o;
+        check(!s.m.to_safe(s.now, &o) && s.m.state() == State::kArmed && o.n_events == 0, "to_safe refused while ARMED");
+        check(!s.m.to_boot(s.now, &o) && s.m.state() == State::kArmed && o.n_events == 0, "to_boot refused while ARMED");
+    }
+    // After a recovery: DISARMED -> SAFE, arming refused (not ready) until the calibration is done again.
+    {
+        Sim s = disarmed();
+        Outputs o;
+        check(s.m.to_safe(s.now, &o) && s.m.state() == State::kSafe && o.n_events == 1 &&
+                  o.events[0].from == State::kDisarmed && o.events[0].to == State::kSafe && o.force_low,
+              "to_safe from DISARMED: SAFE, one event, forced low");
+        s.in.gyro_cal_done = false;
+        s.throttle = 0;
+        s.flags = 0;
+        s.run(700000);
+        s.flags = kFlagArm;
+        s.run(50000);
+        check(s.out.state == State::kSafe, "after to_safe: arming refused until calibration");
+        s.in.gyro_cal_done = true;
+        s.run(2000);
+        check(s.out.state == State::kDisarmed, "calibration done again: back to DISARMED");
+    }
+    // Restart limit reached: BOOT is final, never arms.
+    {
+        Sim s = disarmed();
+        Outputs o;
+        check(s.m.to_boot(s.now, &o) && s.m.state() == State::kBoot && o.n_events == 1, "to_boot from DISARMED: BOOT");
+        s.throttle = 0;
+        s.flags = 0;
+        s.run(700000);
+        s.flags = kFlagArm;
+        s.run(2000000);
+        check(s.out.state == State::kBoot && s.out.force_low, "BOOT after to_boot: final, never arms, forced low");
+    }
 }
 
 void test_flash_guard() {
@@ -560,6 +719,7 @@ int main() {
     test_kill_and_imu();
     test_latch_and_rearm();
     test_random();
+    test_watchdog();
     test_flash_guard();
     test_rest_detector();
     std::printf("safety host test: %d checks, %d failed\n", g_checks, g_failed);

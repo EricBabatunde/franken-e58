@@ -55,6 +55,12 @@ InitStatus init(hal_i2c::Bus bus);
 // Repeats the full sequence with a different DLPF_CFG (0 to 7). No allocation.
 InitStatus reconfigure(uint8_t dlpf_cfg);
 
+// M7b. Bus owner only, no allocation (the device was added by init()).
+// sleep(): PWR_MGMT_1 SLEEP, so data-ready stops (bench fault injection 'z', IMU recovery test).
+// soft_reset(): PWR_MGMT_1 DEVICE_RESET, best effort (boot retry). init() then runs the full sequence.
+esp_err_t sleep();
+esp_err_t soft_reset();
+
 // One 14-byte transfer into `out`. No allocation; uses a static buffer.
 esp_err_t read_burst(uint32_t t_us, RawSample* out);
 

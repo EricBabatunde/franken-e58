@@ -1,5 +1,6 @@
 #include "link.h"
 
+#include "board_config.h"
 #include "esp_cpu.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -53,12 +54,14 @@ Result handle(Transport t, const uint8_t* buf, size_t len, int64_t t_rx_us, Coun
     s.flags = f.flags;
     s.transport = t;
     s.check = setpoint::check_word(s);
+    // M7b decision D3: A/B switch board::kSetpointCriticalSection. Without it the "total" and
+    // "inside" figures differ only by the cycle-count reads.
     const uint32_t c0 = esp_cpu_get_cycle_count();
-    portENTER_CRITICAL(&s_setpoint_mux[t]);
+    if constexpr (board::kSetpointCriticalSection) portENTER_CRITICAL(&s_setpoint_mux[t]);
     const uint32_t c1 = esp_cpu_get_cycle_count();
     s_setpoint[t].write(s);
     const uint32_t c2 = esp_cpu_get_cycle_count();
-    portEXIT_CRITICAL(&s_setpoint_mux[t]);
+    if constexpr (board::kSetpointCriticalSection) portEXIT_CRITICAL(&s_setpoint_mux[t]);
     const uint32_t c3 = esp_cpu_get_cycle_count();
     const uint32_t total = c3 - c0;
     const uint32_t inner = c2 - c1;

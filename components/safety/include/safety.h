@@ -8,16 +8,25 @@
 //
 //   BOOT -> SAFE -> DISARMED -> ARMED -> (cut) -> DISARMED (latched)
 //
-// BOOT: outputs forced low, nothing initialised yet. SAFE: outputs forced low and the IMU
-// running; waiting for the gyro calibration and a healthy IMU. DISARMED: ready to arm.
-// ARMED: outputs follow the throttle. A cut (link silence, KILL, missing IMU data-ready)
-// returns to DISARMED with the latch set; clearing the arm flag returns to DISARMED without it.
-// Either way re-arming needs the throttle held low and a fresh arm edge. No automatic re-arm.
+// BOOT: outputs forced low, nothing initialised yet (or, M7b, the IMU could not be recovered).
+// SAFE: outputs forced low and the IMU running; waiting for the gyro calibration and a healthy
+// IMU (also after an IMU recovery, M7b). DISARMED: ready to arm. ARMED: outputs follow the
+// throttle. A cut (watchdog hard latch, KILL, watchdog dead, missing data-ready backup check, link
+// silence) returns to DISARMED with the latch set; clearing the arm flag returns to DISARMED
+// without it. Either way re-arming needs the throttle held low and a fresh arm edge. No automatic
+// re-arm.
 namespace safety {
 
 enum class State : uint8_t { kBoot, kSafe, kDisarmed, kArmed };
 
-enum class Cut : uint8_t { kNone, kLinkSilence, kKill, kImuMissing };
+// kImuMissing is the flight task's 1 ms-tick backup check (M7b: > 6 ms, name "imu_missing_tick");
+// the GPTimer watchdog decides at 3 ms (kWdImuMissing) and on a heartbeat stall (kWdHeartbeat).
+// kWdDead: the watchdog ISR itself stopped running while ARMED.
+enum class Cut : uint8_t { kNone, kLinkSilence, kKill, kImuMissing, kWdHeartbeat, kWdImuMissing, kWdDead };
+
+// Hard-latch reasons set by the watchdog ISR (hal_mcpwm::hard_cut). Same values as wdt::Reason.
+constexpr uint8_t kHardHeartbeat = 1;
+constexpr uint8_t kHardImuMissing = 2;
 
 // Reasons an arm attempt is refused, in the order they are checked. Bit (1 << reason) in a mask.
 enum class Refusal : uint8_t {
@@ -27,6 +36,7 @@ enum class Refusal : uint8_t {
     kKill,            // KILL flag set in the frame
     kNoArmEdge,       // arm flag already high when the link came up (boot, reconnect, cut)
     kImuUnhealthy,    // data-ready missing or I2C errors
+    kWdDead,          // the GPTimer watchdog ISR is not running (M7b)
     kGyroCal,         // gyro calibration not complete
     kAccelBad,        // accelerometer norm outside the trusted band (R6: relative to g0)
     kTilted,          // tilt beyond the limit
@@ -66,7 +76,10 @@ struct Inputs {
     uint8_t sp_transport = 0;    // a change of transport counts as a reconnect
     uint16_t throttle = 0;       // permille, 0 to 1000 (clamped by the machine)
     uint8_t flags = 0;           // blueprint 4.6: bit0 arm, bit1 kill, bit2 angle mode
-    bool imu_missing = false;    // no data-ready for longer than the cut threshold
+    bool imu_missing = false;    // no data-ready for longer than 3 ms (health and refusals)
+    bool imu_missing_cut = false;  // backup cut: no data-ready for longer than the tick threshold (M7b)
+    uint8_t hard_cut = 0;        // watchdog hard latch seen (kHardHeartbeat, kHardImuMissing), 0: none
+    bool wd_alive = true;        // watchdog ISR count advancing (M7b)
     int64_t imu_last_us = 0;     // last data-ready timestamp, for the event record
     bool imu_healthy = false;
     bool gyro_cal_done = false;
@@ -111,6 +124,12 @@ public:
 
     // One iteration. Fills `out` (state, outputs, events). Call at the loop rate.
     void step(const Inputs& in, Outputs* out);
+
+    // M7b IMU recovery. Both refuse (return false, no change) while ARMED.
+    // to_safe(): DISARMED -> SAFE (back through the gyro calibration); SAFE stays SAFE; BOOT stays BOOT.
+    // to_boot(): SAFE or DISARMED -> BOOT, final (the IMU could not be recovered).
+    bool to_safe(int64_t now_us, Outputs* out);
+    bool to_boot(int64_t now_us, Outputs* out);
 
     State state() const { return state_; }
     bool latched() const { return latched_; }
@@ -159,6 +178,10 @@ public:
 
     void sample(int64_t now_us, const float gyro_dps[3], const float accel_g[3]);
 
+    // M7b IMU recovery: forget the calibration and the rest state and start a new calibration
+    // window (cal_restarts is kept, so the status line still counts restarts).
+    void reset();
+
     bool cal_done() const { return cal_done_; }
     uint32_t cal_restarts() const { return cal_restarts_; }
     uint32_t cal_progress() const { return n_; }   // samples in the current window
@@ -203,6 +226,10 @@ private:
 constexpr bool flash_writes_allowed(State s) { return s != State::kArmed; }
 void publish_state(State s);
 bool flash_writes_allowed();
+State published_state();  // the last state published by the flight task (lock-free; ISR-safe)
+
+// IMU recovery (M7b) only in SAFE or DISARMED, never while ARMED (and not in BOOT before init).
+constexpr bool recovery_allowed(State s) { return s == State::kSafe || s == State::kDisarmed; }
 
 const char* name(State s);
 const char* name(Cut c);

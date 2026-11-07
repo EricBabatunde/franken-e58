@@ -3,7 +3,7 @@
 Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is ground-up ESP-IDF 5.x (PlatformIO, official `espressif32` platform, `framework = espidf`, no Arduino). The binding spec is `docs/Franken-E58_Full_System_Architecture_Blueprint.md`. Read the sections relevant to the current module before starting. Do not load the whole file unless it is needed.
 
 ## Status
-- Phase 1 (breadboard, props off, no motors). M7a passed on 4 November 2026 (see `docs/M7a_package.md`); next M7b. No motors, MOSFET stage or shield may be connected.
+- Phase 1 (breadboard, props off, no motors). M7b passed and closed 7 November 2026 (`docs/M7b_package.md`). Next module: M7c, spec pending; do not start it until the spec is given. No motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment.
 - Work on ONE module at a time. Never add features from later modules.
 
 ## Commands
@@ -23,7 +23,7 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 - Platform pinned to `espressif32 @ 6.13.0` (ESP-IDF 5.5.3).
 - Use split component names (`esp_driver_gpio`, `esp_driver_i2c`, `esp_driver_mcpwm`, `esp_driver_gptimer`, `esp_adc`), never the legacy `driver` catch-all.
 - Flash mode is DIO.
-- I2C bus recovery by tear-down and rebuild is a bench-test exception and must never run while armed. Flight code relies on the IMU-stall cut trigger. Investigate i2c_master_bus_reset() in M3.
+- I2C bus recovery is `i2c_master_bus_reset()` plus IMU init in the flight task, SAFE or DISARMED only, 3 attempts, then at most 2 controlled restarts per power-on, then BOOT (M7b). Never while armed, and never a bus tear-down and rebuild. Flight code relies on the GPTimer watchdog's IMU-missing cut.
 
 ## Code rules
 - C++17 for firmware, Python 3 for tools. British English in comments and docs.

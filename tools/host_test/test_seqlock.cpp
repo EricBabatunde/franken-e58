@@ -34,6 +34,15 @@ Payload make(uint32_t v) {
     return p;
 }
 
+// The slot's initial value (all zeros, before the first write completes). A read that overlaps
+// the very first write correctly returns it, so it is not a torn record.
+bool initial(const Payload& p) {
+    for (auto x : p.w) {
+        if (x != 0) return false;
+    }
+    return p.check == 0;
+}
+
 bool whole(const Payload& p) {
     for (auto x : p.w) {
         if (x != p.w[0]) return false;
@@ -98,7 +107,10 @@ Result run_slot(int gap_ns, std::chrono::milliseconds dur) {
             continue;
         }
         r.ok++;
-        if (slot.writes() == 0) continue;
+        if (initial(p)) {
+            if (last != 0) r.backwards++;  // the initial value after a real one is a step back
+            continue;
+        }
         if (!whole(p)) {
             r.torn++;
         } else if (p.w[0] < last) {
@@ -135,7 +147,7 @@ Result run_old(int gap_ns, std::chrono::milliseconds dur) {
             continue;
         }
         r.ok++;
-        if (slot.seq.load() >= 2 && !whole(p)) r.torn++;
+        if (!initial(p) && !whole(p)) r.torn++;
     }
     stop = true;
     writer.join();

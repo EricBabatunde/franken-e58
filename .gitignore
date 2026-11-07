@@ -2,6 +2,7 @@
 .venv/
 sdkconfig.*
 !sdkconfig.defaults
+!sdkconfig.defaults.bench
 .claude/settings.local.json
 docs/third_party/
 logs/

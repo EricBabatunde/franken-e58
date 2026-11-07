@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 
 #include "board_config.h"
 #include "esp_cpu.h"
@@ -11,6 +12,7 @@
 #include "hal_mcpwm.h"
 #include "seqlock.h"
 #include "setpoint.h"
+#include "wdt.h"
 
 namespace flight {
 
@@ -30,10 +32,13 @@ constexpr uint32_t kOverrunCycles = board::kLoopOverrunUs * kCpuMhz;
 SeqlockSlot<Status> s_status_slot;
 SeqlockSlot<Window> s_window_slot;
 SeqlockSlot<EventLog> s_event_slot;
+SeqlockSlot<RecoveryLog> s_recovery_slot;
 std::atomic<uint32_t> s_window_seq{0};
 StartReport s_start;                          // written before s_started is set
 std::atomic<bool> s_started{false};
 std::atomic<bool> s_int_request{true};
+std::atomic<uint8_t> s_fault_request{0};      // Fault, written by Core 0, cleared by the flight task
+std::atomic<bool> s_boot_request{false};
 bool s_outputs_ok = false;
 
 // ---- Core 1 state (flight task only). File-scope objects, constructed before app_main (no
@@ -48,6 +53,7 @@ safety::RestDetector rest(safety::RestConfig{
 Status s_st;
 Window s_win;
 EventLog s_log;
+RecoveryLog s_rec;
 
 void keep_min(uint32_t& m, uint32_t v) { if (v < m) m = v; }
 void keep_max(uint32_t& m, uint32_t v) { if (v > m) m = v; }
@@ -65,8 +71,9 @@ void take_isr_instrument(Window& w) {
 
 void publish_events() { s_event_slot.write(s_log); }
 
-void record(const safety::Event& e, int64_t t_force_us, uint32_t force_cycles) {
+EventRecord& record(const safety::Event& e, int64_t t_force_us, uint32_t force_cycles) {
     EventRecord& r = s_log.rec[(e.seq - 1) % kEventLog];
+    r = EventRecord{};
     r.ev = e;
     r.t_force_us = t_force_us;
     r.force_cycles = force_cycles;
@@ -77,24 +84,83 @@ void record(const safety::Event& e, int64_t t_force_us, uint32_t force_cycles) {
         case safety::EventKind::kCut:     s_st.cuts++; break;
         case safety::EventKind::kDisarm:  s_st.disarms++; break;
     }
+    return r;
+}
+
+void record_all(const safety::Outputs& o) {
+    for (int i = 0; i < o.n_events; ++i) record(o.events[i], 0, 0);
+    if (o.n_events > 0) publish_events();
 }
 
 [[noreturn]] void park() {
     for (;;) vTaskDelay(portMAX_DELAY);
 }
 
-void task(void*) {
-    // ---- Init (Core 1): bus A, IMU, data-ready interrupt, as in M3.
-    StartReport& sr = s_start;
-    sr.bus_err = hal_i2c::init(hal_i2c::Bus::A, board::kImuSda, board::kImuScl, board::kI2cHz);
-    sr.bus_lines = hal_i2c::line_check(hal_i2c::Bus::A);
-    if (sr.bus_err == ESP_OK) {
-        sr.init = drv_mpu6500::init(hal_i2c::Bus::A);
-        if (sr.init.step == drv_mpu6500::Step::kNone) {
-            sr.int_err = drv_mpu6500::int_install(xTaskGetCurrentTaskHandle());
+// M7b console fault injection. Runs between the safety decision and the output write, so a
+// resumed stall exercises the hard latch in the middle of an output update.
+void run_fault(Fault f) {
+    switch (f) {
+        case Fault::kStallShort: {
+            const int64_t t0 = esp_timer_get_time();
+            while (esp_timer_get_time() - t0 < board::kFaultStallShortUs) {
+            }
+            break;
         }
+        case Fault::kStallMasked: {
+            // Interrupts masked on Core 1 (up to the FreeRTOS critical level): the GPTimer watchdog
+            // cannot run, the interrupt watchdog (CPU1 tick) panics and the panic wrapper forces low.
+            const UBaseType_t m = portSET_INTERRUPT_MASK_FROM_ISR();
+            const int64_t t0 = esp_timer_get_time();  // reads the systimer: works with interrupts masked
+            while (esp_timer_get_time() - t0 < board::kFaultStallMaskedUs) {
+            }
+            portCLEAR_INTERRUPT_MASK_FROM_ISR(m);
+            break;
+        }
+        case Fault::kStallLong: {
+            const int64_t t0 = esp_timer_get_time();
+            while (esp_timer_get_time() - t0 < board::kFaultStallLongUs) {
+            }
+            break;
+        }
+        case Fault::kAbort:
+            std::abort();  // deliberate panic: the wrapper forces low, then the IDF handler prints
+        default:
+            break;
     }
-    sr.ok = sr.bus_err == ESP_OK && sr.init.step == drv_mpu6500::Step::kNone && sr.int_err == ESP_OK;
+}
+
+// M7b boot: IMU init, retried when board::kImuBootRetry (bus reset, best-effort DEVICE_RESET,
+// wait, full sequence). The outputs were forced low by hal_mcpwm::init() before this task
+// started, and the machine cannot leave BOOT until this returns success.
+void imu_boot(StartReport& sr) {
+    sr.bus_err = hal_i2c::init(hal_i2c::Bus::A, board::kImuSda, board::kImuScl, board::kI2cHz, board::kImuBootRetry);
+    sr.bus_lines = hal_i2c::line_check(hal_i2c::Bus::A);
+    if (sr.bus_err != ESP_OK) return;
+    const uint32_t n = board::kImuBootRetry ? board::kImuBootAttempts : 1;
+    for (uint32_t a = 0; a < n && a < 3; ++a) {
+        if (a > 0) {
+            sr.retry_bus_reset_err[a] = hal_i2c::bus_reset(hal_i2c::Bus::A);
+            sr.retry_soft_reset_err[a] = drv_mpu6500::soft_reset();
+            vTaskDelay(pdMS_TO_TICKS(board::kImuBootRetryWaitMs) + 1);
+        }
+        sr.init = drv_mpu6500::init(hal_i2c::Bus::A);
+        sr.attempt[a] = sr.init;
+        sr.attempts = a + 1;
+        if (sr.init.step == drv_mpu6500::Step::kNone) return;
+    }
+}
+
+void task(void*) {
+    // ---- Init (Core 1): bus A, IMU, data-ready interrupt (as in M3), then the watchdog, whose
+    // interrupt is allocated here, on Core 1.
+    StartReport& sr = s_start;
+    imu_boot(sr);
+    if (sr.bus_err == ESP_OK && sr.init.step == drv_mpu6500::Step::kNone) {
+        sr.int_err = drv_mpu6500::int_install(xTaskGetCurrentTaskHandle());
+    }
+    const bool imu_ok = sr.bus_err == ESP_OK && sr.init.step == drv_mpu6500::Step::kNone && sr.int_err == ESP_OK;
+    if (imu_ok) sr.wdt = wdt::start();
+    sr.ok = imu_ok && sr.wdt.err == ESP_OK;
     sr.stack_free = uxTaskGetStackHighWaterMark(nullptr);
     sr.done = true;
     s_started.store(true, std::memory_order_release);
@@ -107,8 +173,7 @@ void task(void*) {
     safety::Inputs in;
     if (s_outputs_ok) {
         machine.begin(esp_timer_get_time(), &out);
-        for (int i = 0; i < out.n_events; ++i) record(out.events[i], 0, 0);
-        publish_events();
+        record_all(out);
     }
     safety::publish_state(machine.state());
 
@@ -118,6 +183,7 @@ void task(void*) {
     ulTaskNotifyTake(pdTRUE, 0);
     int64_t t_win = esp_timer_get_time();
     uint32_t raw_mark = drv_mpu6500::raw_pulses();
+    (void)wdt::take_window();
     uint32_t index = 0;
     uint32_t prev_irq = 0;
     bool have_prev = false;
@@ -130,6 +196,13 @@ void task(void*) {
     sp::Setpoint last_good[sp::kTransports] = {};
     bool have_good[sp::kTransports] = {false, false};
     drv_mpu6500::RawSample sample{};
+    // Watchdog alive check.
+    uint32_t wd_count_seen = wdt::isr_count();
+    int64_t wd_change_us = esp_timer_get_time();
+    // IMU recovery episode.
+    uint32_t rec_episode = 0;
+    int64_t rec_last_us = 0;
+    bool rec_exhausted = false;
 
     for (;;) {
         const int64_t now0 = esp_timer_get_time();
@@ -140,6 +213,7 @@ void task(void*) {
             s_win.raw_pulses = raw - raw_mark;
             raw_mark = raw;
             take_isr_instrument(s_win);
+            s_win.wd = wdt::take_window();
             s_window_slot.write(s_win);
             // Single writer: a load and a store, not a read-modify-write (no __atomic_fetch_add call).
             s_window_seq.store(s_window_seq.load(std::memory_order_relaxed) + 1, std::memory_order_release);
@@ -148,11 +222,12 @@ void task(void*) {
         }
 
         // Data-ready wait. With a 1 ms tick, a 3-tick timeout can expire 2 to 3 ms after the last
-        // pulse, so a timeout only cuts once more than kImuMissingCutUs have really passed since the
-        // last ISR timestamp; until then (and until data returns) the wait is one tick at a time.
+        // pulse; until data returns the wait is one tick at a time. The heartbeat is stored on every
+        // wake-up, data or timeout, so its gap stays below 3 ms plus one tick (threshold 5 ms).
         const uint32_t n = ulTaskNotifyTake(pdTRUE, wait);
         const int64_t woke64 = esp_timer_get_time();
         const uint32_t woke = static_cast<uint32_t>(woke64);
+        wdt::heartbeat(woke);
         const uint32_t c_wake = esp_cpu_get_cycle_count();
         s_win.iterations++;
 
@@ -161,7 +236,9 @@ void task(void*) {
             s_win.wakes++;
             if (n > 1) s_win.missed += n - 1;
             const uint32_t t_irq = drv_mpu6500::last_notify_us();
-            const uint32_t lat = woke - t_irq;
+            // A pulse that arrived after the wake stamp gives a negative difference: clamp to 0.
+            const int32_t lat_s = static_cast<int32_t>(woke - t_irq);
+            const uint32_t lat = lat_s > 0 ? static_cast<uint32_t>(lat_s) : 0;
             keep_min(s_win.lat_min, lat);
             keep_max(s_win.lat_max, lat);
             s_win.lat_sum += lat;
@@ -211,16 +288,24 @@ void task(void*) {
             wait = 1;
         }
         const uint32_t last_pulse = drv_mpu6500::last_notify_us();
-        const uint32_t since = woke - last_pulse;
-        const bool missing = since > board::kImuMissingCutUs;
+        // The pulse is read after the burst read, so a newer pulse than the wake stamp is possible
+        // (late wake): that is not missing, and the unsigned difference would wrap to ~4295 s.
+        const int32_t since_s = static_cast<int32_t>(woke - last_pulse);
+        const uint32_t since = since_s > 0 ? static_cast<uint32_t>(since_s) : 0;
+        const bool missing = since > board::kImuMissingCutUs;           // health and refusals (3 ms)
+        const bool missing_cut = since > board::kImuMissingTickCutUs;   // backup cut (6 ms)
         if (missing) good_reads = 0;
+        if (!missing && good_reads >= board::kImuHealthySamples) rec_episode = 0;  // episode over
 
-        // Bench fault injection request from Core 0 (atomic, no lock).
+        // Bench fault injection requests from Core 0 (atomics, no lock).
         const bool want_int = s_int_request.load(std::memory_order_acquire);
         if (want_int != int_on) {
             drv_mpu6500::int_enable(want_int);
             int_on = want_int;
         }
+        const Fault fault = static_cast<Fault>(s_fault_request.load(std::memory_order_acquire));
+        if (fault != Fault::kNone) s_fault_request.store(0, std::memory_order_relaxed);
+        if (fault == Fault::kImuSleep) (void)drv_mpu6500::sleep();
 
         // Freshest setpoint over both transports. On a give-up, the last good one.
         bool have_sp = false;
@@ -249,6 +334,16 @@ void task(void*) {
             }
         }
 
+        // Watchdog alive: its alarm count must advance. Checked against the time of the last change,
+        // so a long block of this task (an IMU recovery) does not count as a dead watchdog.
+        const uint32_t wd_count = wdt::isr_count();
+        if (wd_count != wd_count_seen) {
+            wd_count_seen = wd_count;
+            wd_change_us = woke64;
+        }
+        const bool wd_alive = woke64 - wd_change_us <= static_cast<int64_t>(board::kWdtAliveUs);
+        const uint8_t hard = hal_mcpwm::hard_latched();
+
         in.now_us = woke64;
         in.have_setpoint = have_sp;
         in.sp_rx_us = best.t_rx_us;
@@ -256,12 +351,15 @@ void task(void*) {
         in.throttle = best.throttle;
         in.flags = best.flags;
         in.imu_missing = missing;
+        in.imu_missing_cut = missing_cut;
         in.imu_last_us = woke64 - static_cast<int64_t>(since);
         in.imu_healthy = good_reads >= board::kImuHealthySamples && !missing;
         in.gyro_cal_done = rest.cal_done();
         in.at_rest = rest.at_rest(woke64);
         in.accel_ok = rest.accel_ok();
         in.tilt_ok = rest.tilt_ok();
+        in.hard_cut = hard;
+        in.wd_alive = wd_alive;
 
         if (s_outputs_ok) {
             machine.step(in, &out);
@@ -270,12 +368,23 @@ void task(void*) {
         }
         const uint32_t c_decided = esp_cpu_get_cycle_count();
 
-        // Outputs. A cut or disarm always writes the force, and the time to it is recorded.
+        // The hard latch is cleared ONLY here, in the iteration where the machine enters ARMED (the
+        // normal arm sequence: throttle low plus a fresh arm edge), before the outputs are released.
         bool must_force = false;
+        bool entered_armed = false;
         for (int i = 0; i < out.n_events; ++i) {
             const safety::EventKind k = out.events[i].kind;
             must_force = must_force || k == safety::EventKind::kCut || k == safety::EventKind::kDisarm;
+            entered_armed = entered_armed || (k == safety::EventKind::kState && out.events[i].to == safety::State::kArmed);
         }
+        if (entered_armed) hal_mcpwm::clear_hard_cut();
+
+        // Fault stalls: after the decision, before the write.
+        if (fault != Fault::kNone && fault != Fault::kImuSleep) run_fault(fault);
+
+        // Outputs. A cut or disarm always writes the force, and the time to it is recorded. While the
+        // hard latch is set, release_all() refuses and set_all_permille() writes 0 (output_gate.h).
+        if (hal_mcpwm::hard_latched() != 0) forced = true;  // the ISR forced every generator low
         int64_t t_force = 0;
         uint32_t force_cyc = 0;
         if (out.force_low) {
@@ -285,29 +394,73 @@ void task(void*) {
                 t_force = esp_timer_get_time();
                 forced = true;
             }
-            if (duty != 0) {
-                hal_mcpwm::set_all_permille(0);
-                duty = 0;
-            }
+            if (duty != 0) duty = hal_mcpwm::set_all_permille(0);
         } else {
-            if (out.duty_permille != duty) {
-                hal_mcpwm::set_all_permille(out.duty_permille);
-                duty = out.duty_permille;
-            }
-            if (forced) {
-                hal_mcpwm::release_all();
-                forced = false;
-            }
+            if (out.duty_permille != duty) duty = hal_mcpwm::set_all_permille(out.duty_permille);
+            if (forced) forced = !hal_mcpwm::release_all();
         }
         safety::publish_state(out.state);
         if (out.state == safety::State::kArmed) s_win.armed_iterations++;
 
         for (int i = 0; i < out.n_events; ++i) {
-            const bool forcing = out.events[i].kind == safety::EventKind::kCut ||
-                                 out.events[i].kind == safety::EventKind::kDisarm;
-            record(out.events[i], forcing ? t_force : 0, forcing ? force_cyc : 0);
+            const safety::Event& ev = out.events[i];
+            const bool forcing = ev.kind == safety::EventKind::kCut || ev.kind == safety::EventKind::kDisarm;
+            EventRecord& r = record(ev, forcing ? t_force : 0, forcing ? force_cyc : 0);
+            if (ev.kind == safety::EventKind::kCut &&
+                (ev.cut == safety::Cut::kWdHeartbeat || ev.cut == safety::Cut::kWdImuMissing)) {
+                const wdt::Trip tr = wdt::last_trip();
+                r.wd_decide_us = tr.t_decide_us;
+                r.wd_ref_us = tr.ref_us;
+                r.wd_force_cycles = tr.force_cycles;
+            }
         }
         if (out.n_events > 0) publish_events();
+
+        // ---- IMU recovery: SAFE or DISARMED only, never while ARMED (a missing IMU while ARMED is cut
+        // by the watchdog first; recovery waits for DISARMED). Suppressed while 'm' has the interrupt
+        // disabled on purpose. Bounded: board::kRecoveryAttempts per episode, board::kRecoveryBackoffUs
+        // apart; then Core 0 decides a controlled restart or BOOT.
+        if (s_outputs_ok && safety::recovery_allowed(machine.state()) && int_on && !rec_exhausted &&
+            since > board::kRecoveryMissingUs && (rec_episode == 0 || woke64 - rec_last_us >= board::kRecoveryBackoffUs)) {
+            RecoveryRecord rr;
+            rr.seq = s_rec.count + 1;
+            rr.t_us = woke64;
+            rr.state = machine.state();
+            rr.attempt = ++rec_episode;
+            rr.missing_us = since;
+            const int64_t t0 = esp_timer_get_time();
+            rr.bus_reset_err = hal_i2c::bus_reset(hal_i2c::Bus::A);
+            const drv_mpu6500::InitStatus st = drv_mpu6500::init(hal_i2c::Bus::A);  // blocks ~100 ms
+            rr.duration_us = static_cast<uint32_t>(esp_timer_get_time() - t0);
+            rr.step = st.step;
+            rr.init_err = st.err;
+            rr.who_am_i = st.who_am_i;
+            rr.ok = st.step == drv_mpu6500::Step::kNone;
+            rec_last_us = esp_timer_get_time();
+            s_rec.rec[(rr.seq - 1) % kRecoveryLog] = rr;
+            s_rec.count = rr.seq;
+            s_recovery_slot.write(s_rec);
+            s_st.rec_attempts++;
+            if (rr.ok) {
+                s_st.rec_ok++;
+                rest.reset();
+                good_reads = 0;
+                have_prev = false;
+                ulTaskNotifyTake(pdTRUE, 0);
+                wait = kWaitTicks;
+                machine.to_safe(rec_last_us, &out);  // back through the gyro calibration
+                record_all(out);
+                safety::publish_state(machine.state());
+            } else if (rec_episode >= board::kRecoveryAttempts) {
+                rec_exhausted = true;
+            }
+        }
+        if (s_boot_request.load(std::memory_order_acquire) && machine.state() != safety::State::kBoot) {
+            if (machine.to_boot(esp_timer_get_time(), &out)) {
+                record_all(out);
+                safety::publish_state(machine.state());
+            }
+        }
 
         const uint32_t work = esp_cpu_get_cycle_count() - c_wake;
         keep_min(s_win.work_cyc_min, work);
@@ -323,8 +476,8 @@ void task(void*) {
             since_status = 0;
             s_st.publish_seq++;
             s_st.t_us = woke64;
-            s_st.state = out.state;
-            s_st.latched = out.latched;
+            s_st.state = machine.state();
+            s_st.latched = machine.latched();
             s_st.last_cut = machine.last_cut();
             s_st.blocking = out.blocking;
             s_st.have_sp = have_sp;
@@ -350,6 +503,11 @@ void task(void*) {
             s_st.accel_ok = in.accel_ok;
             s_st.tilt_ok = in.tilt_ok;
             s_st.flash_ok = safety::flash_writes_allowed();
+            s_st.hard_latched = hal_mcpwm::hard_latched();
+            s_st.wd_alive = wd_alive;
+            s_st.wd_count = wd_count;
+            s_st.rec_episode = rec_episode;
+            s_st.rec_exhausted = rec_exhausted;
             s_status_slot.write(s_st);
         }
     }
@@ -361,6 +519,7 @@ StartReport start(bool outputs_ok) {
     s_outputs_ok = outputs_ok;
     TaskHandle_t h = nullptr;
     xTaskCreatePinnedToCore(task, "flight", kStackBytes, nullptr, configMAX_PRIORITIES - 2, &h, 1);
+    // Boot retry: up to 3 attempts of the IMU sequence (~110 ms each) plus 100 ms waits.
     for (int i = 0; i < 300 && !s_started.load(std::memory_order_acquire); ++i) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -378,6 +537,12 @@ bool window(Window* out, uint32_t* seq) {
 
 bool events(EventLog* out) { return s_event_slot.read(out); }
 
+bool recovery_log(RecoveryLog* out) { return s_recovery_slot.read(out); }
+
 void request_imu_int(bool enabled) { s_int_request.store(enabled, std::memory_order_release); }
+
+void request_fault(Fault f) { s_fault_request.store(static_cast<uint8_t>(f), std::memory_order_release); }
+
+void request_boot_state() { s_boot_request.store(true, std::memory_order_release); }
 
 }  // namespace flight

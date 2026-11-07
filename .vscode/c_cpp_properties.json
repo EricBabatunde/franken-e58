@@ -192,6 +192,11 @@
                 "/home/eric/Documents/projects/franken-e58/managed_components/joltwallet__littlefs/include",
                 "/home/eric/Documents/projects/franken-e58/components/hal_fs/include",
                 "/home/eric/Documents/projects/franken-e58/components/comms/include",
+                "/home/eric/Documents/projects/franken-e58/components/hal_mcpwm/include",
+                "/home/eric/Documents/projects/franken-e58/components/safety/include",
+                "/home/eric/Documents/projects/franken-e58/components/hal_gptimer/include",
+                "/home/eric/Documents/projects/franken-e58/components/wdt/include",
+                "/home/eric/Documents/projects/franken-e58/components/flight/include",
                 "/home/eric/Documents/projects/franken-e58/src",
                 ""
             ],
@@ -382,6 +387,11 @@
                     "/home/eric/Documents/projects/franken-e58/managed_components/joltwallet__littlefs/include",
                     "/home/eric/Documents/projects/franken-e58/components/hal_fs/include",
                     "/home/eric/Documents/projects/franken-e58/components/comms/include",
+                    "/home/eric/Documents/projects/franken-e58/components/hal_mcpwm/include",
+                    "/home/eric/Documents/projects/franken-e58/components/safety/include",
+                    "/home/eric/Documents/projects/franken-e58/components/hal_gptimer/include",
+                    "/home/eric/Documents/projects/franken-e58/components/wdt/include",
+                    "/home/eric/Documents/projects/franken-e58/components/flight/include",
                     "/home/eric/Documents/projects/franken-e58/src",
                     ""
                 ]
