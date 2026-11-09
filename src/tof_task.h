@@ -33,6 +33,17 @@ struct TofStatus {
     uint32_t resets_done;           // reset requests handled
     uint32_t recovery_us;           // XSHUT release to first valid reading after the latest init (0 = not yet)
     uint32_t io_errors;             // failed data-ready polls or result reads
+    // Phase 1 integration (D-P1-1): cumulative counters, updated with every published record, so a
+    // reporter can work out rates per window without seeing every record.
+    uint32_t readings;              // completed reads (valid or not)
+    uint32_t valid;                 // ... of which valid
+    uint32_t no_data;               // no-data records
+    uint32_t status_count[16];      // completed reads per RangeStatus value (index 15: any other value)
+    uint32_t last_reading_us;       // t_us of the latest completed read (0: none yet)
+    uint32_t nodata_first_us;       // first no-data record after the latest read (0: none since that read)
+    uint32_t nodata_episodes;       // read -> no-data transitions
+    uint16_t last_distance_mm;      // latest completed read (0 unless valid)
+    bool last_valid;
 };
 
 void tof_task_start();

@@ -24,6 +24,7 @@
 #include "http_static.h"
 #include "link.h"
 #include "m7c_timing.h"
+#include "p1_integration.h"
 #include "safety.h"
 #include "sdkconfig.h"
 #include "udp_server.h"
@@ -327,7 +328,7 @@ bool print_task_table() {
 bool print_task_table() {
     // Without CONFIG_FREERTOS_USE_TRACE_FACILITY (the bench overlay sets it) only known names.
     static const char* kNames[] = {"IDLE0", "IDLE1", "ipc0", "ipc1", "esp_timer", "wifi", "tiT", "httpd", "sys_evt",
-                                   "Tmr Svc", "udp_rx", "main", "m7b_bench", "m7b_keys", "flight"};
+                                   "Tmr Svc", "udp_rx", "main", "m7b_bench", "m7b_keys", "flight", "tof"};
     bool ok = true;
     ESP_LOGW(TAG, "TASKS table: CONFIG_FREERTOS_USE_TRACE_FACILITY not set (flash the bench environment): known names only");
     for (const char* name : kNames) {
@@ -588,7 +589,8 @@ void diag_report() {
 
 void bench_task(void*) {
     for (int i = 0; i < 3; ++i) {
-        ESP_LOGW(TAG, "################ %s ################", board::kBenchBanner);
+        ESP_LOGW(TAG, "################ %s ################",
+                 FE_P1_INTEGRATION ? board::kP1Banner : board::kBenchBanner);
     }
     ESP_LOGW(TAG, "GPIO %d to %d: 10 kOhm pull-downs and a multimeter only. Bench duty cap %u permille (at most %.2f V"
                   " average at full throttle). Motors under load remain gated by the VBAT cutoff and brownout tuning"
@@ -664,6 +666,9 @@ void bench_task(void*) {
              u(wr.alarm_ticks), u(wr.resolution_hz), wr.intr_level, wr.core, u(board::kWdtHeartbeatStallUs),
              u(board::kImuMissingCutUs), u(board::kImuMissingTickCutUs), u(board::kWdtAliveUs));
 
+    // Phase 1 integration: the ToF task starts here, before the task table and the interrupt dump,
+    // so both show it (Core 0) and the bus B interrupt.
+    p1_start();
     xTaskCreatePinnedToCore(keys_task, "m7b_keys", 3072, nullptr, 2, nullptr, 0);
     vTaskDelay(pdMS_TO_TICKS(200));
     const bool tasks_ok = print_task_table();
@@ -741,6 +746,7 @@ void bench_task(void*) {
             print_summary();
         }
         m7c_poll();
+        p1_poll();
         vTaskDelay(pdMS_TO_TICKS(kPollMs));
     }
 }

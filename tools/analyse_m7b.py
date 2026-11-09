@@ -5,6 +5,8 @@ M7b: watchdog cuts, hangs and resets, boots after a reset while armed, IMU recov
 table, the critical-section A/B and the armed run (acceptance 14).
 M7c: per-condition latency percentiles (acceptance 7 and 8), the R5 table across configurations
 (acceptance 9) and the 20-minute soak (acceptance 12), from the "m7c: TM" lines.
+Phase 1 integration (docs/P1_integration_package.md): runs I1 and I2 (conditions i1, i2) with the ToF
+lines ("p1: TOF"), acceptance P1-2 to P1-5.
 
 Reads one or more PlatformIO monitor logs (joined in the order given; default: the newest
 logs/device-monitor-*.log) and uses every M7b boot in them. Standard library only:
@@ -15,7 +17,8 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BANNERS = ("M7b bench firmware: no motors may be connected", "M7c bench firmware: no motors may be connected")
+BANNERS = ("M7b bench firmware: no motors may be connected", "M7c bench firmware: no motors may be connected",
+           "P1 integration bench firmware: no motors may be connected")
 WDT_PERIOD_US = 500          # board::kWdtPeriodUs
 HB_US, IMU_US = 5000, 3000   # board::kWdtHeartbeatStallUs, board::kImuMissingCutUs
 FORCE_MAX_US = 50.0          # acceptance 2: decision -> force-low
@@ -236,6 +239,7 @@ def main():
         if s[3]:
             print(f"boot {s[0]}: {s[2]}")
     m7c_report(boots)
+    p1_report(boots)
     print("===== end =====")
     return 0
 
@@ -405,9 +409,10 @@ def m7c_report(boots):
         unintended = {k: v for k, v in s["cuts"].items() if k != EXPECTED_SOAK_CUT}
         heap = s["heap"]
         drift = (heap[-1] - heap[0]) if len(heap) > 1 else 0
-        # No leak: the free heap at the end within 2 KB of the start (as M5 acceptance 6). The minimum is
+        # No leak: the free heap at the end no more than 2 KB below the start (as M5 acceptance 6). More
+        # free heap at the end is memory given back (a closed session), not a leak. The minimum is
         # reported, not judged: page serving borrows tens of KB per request burst and returns it.
-        heap_ok = len(heap) > 1 and abs(drift) <= HEAP_DRIFT_B
+        heap_ok = len(heap) > 1 and drift >= -HEAP_DRIFT_B
         good = (r["secs"] >= SOAK_S - 5 and r["missed"] == 0 and r["i2c"] == 0 and not unintended and heap_ok
                 and r["p999"] < JITTER_P999_US)
         print(f"soak (boot {s['boot']}): {r['secs']:.0f} s, load {r['load']} us | missed {r['missed']} i2c errors"
@@ -422,6 +427,150 @@ def m7c_report(boots):
             print("  stack high-water marks: no task table after the soak (press s at the end)")
     if not soaks:
         print("soak: no 'TM START soak' in these logs")
+
+
+# ---------------------------------------------------------------------------------------------
+# Phase 1 integration (docs/P1_integration_package.md)
+TOF_HZ, TOF_HZ_TOL = 40.0, 2.0     # acceptance P1-2
+TOF_VALID_MIN = 99.0
+TOF_NODATA_MS = 75.0               # board::kTofNoDataPeriods * board::kTofPeriodMs
+TOF_NODATA_SLACK_MS = 15.0         # one failed bus B transfer (10 ms timeout) plus the 2 ms poll
+I1_MIN_S, I2_MIN_S = 600, 300
+
+RE_TOFBOOT = re.compile(r"p1: TOF: (PASS|FAIL) .*? task core (-?\d+) priority (\d+)")
+RE_TOFW = re.compile(r"p1: TOF w(\d+) ([\d.]+)s \| rate ([\d.]+) Hz \| readings (\d+) valid (\d+) \(([\d.]+) %\) no-data (\d+)"
+                     r" \| bus B I/O errors (\d+) \(total (\d+)\) \| status: (.*?) \| latest (\d+) mm (valid|not valid), age (\d+) ms"
+                     r" \| state (\w+), inits (\d+), no-data episodes (\d+)")
+RE_TOFNODATA = re.compile(r"p1: TOF EVENT no-data: last reading t=(\d+) us, first no-data record t=(\d+) us, gap ([\d.]+) ms")
+RE_TOFRESUME = re.compile(r"p1: TOF EVENT readings resumed: reading t=(\d+) us")
+RE_TMSTART_ANY = re.compile(r"m7c: TM START (\w+) epoch")
+
+
+def p1_report(boots):
+    runs = []          # one dict per i1/i2 condition
+    boot_info = []
+    for b, ls in enumerate(boots, 1):
+        info = dict(boot=b, tof_boot=None, tof_task=None, i2c1_core=None, reset=None, brownouts=0)
+        cpu = None
+        cur = None
+        for l in ls:
+            mt = RE_TS.match(l)
+            ts = int(mt.group(1)) if mt else None
+            if (m := RE_RESET.search(l)):
+                info["reset"], info["brownouts"] = m.group(1), int(m.group(3))
+            if (m := RE_TOFBOOT.search(l)):
+                info["tof_boot"] = (m.group(1), int(m.group(2)), int(m.group(3)))
+            if (m := RE_TASK.search(l)) and m.group(1) == "tof" and info["tof_task"] is None:
+                info["tof_task"] = (m.group(2), m.group(3).replace(" ", ""))
+            if l.startswith("CPU 0 interrupt status"):
+                cpu = 0
+            elif l.startswith("CPU 1 interrupt status"):
+                cpu = 1
+            elif cpu is not None and "I2C_EXT1" in l and info["i2c1_core"] is None:
+                info["i2c1_core"] = cpu
+            elif l.startswith("Interrupts available"):
+                cpu = None
+            if (m := RE_TMSTART_ANY.search(l)):
+                cur = None
+                if m.group(1) in ("i1", "i2"):
+                    cur = dict(boot=b, cond=m.group(1), tof=[], heap=[], cuts={}, arms=0, nodata=[], resumed=[], end=None)
+                    runs.append(cur)
+                continue
+            if cur is None:
+                continue
+            r = tm_parse(l)
+            if r and r["phase"] == "END":
+                cur["end"] = r
+                cur = None
+                continue
+            if (m := RE_TOFW.search(l)):
+                cur["tof"].append(dict(secs=float(m.group(2)), readings=int(m.group(4)), valid=int(m.group(5)),
+                                       nodata=int(m.group(7)), ioerr=int(m.group(8)), status=m.group(10),
+                                       state=m.group(14), inits=int(m.group(15))))
+            elif (m := RE_TOFNODATA.search(l)):
+                cur["nodata"].append(float(m.group(3)))
+            elif (m := RE_TOFRESUME.search(l)):
+                cur["resumed"].append(int(m.group(1)))
+            elif (m := RE_HB.search(l)):
+                cur["heap"].append(int(m.group(1)))
+            elif (m := RE_EV.search(l)):
+                text = m.group(3)
+                if text.startswith("CUT "):
+                    k = text.split()[1]
+                    cur["cuts"][k] = cur["cuts"].get(k, 0) + 1
+                elif "-> ARMED" in text and "REFUSED" not in text:
+                    cur["arms"] += 1
+        boot_info.append(info)
+    if not runs and not any(i["tof_boot"] for i in boot_info):
+        return
+    print("----- Phase 1 integration -----")
+    for i in boot_info:
+        if i["tof_boot"]:
+            tb = i["tof_boot"]
+            print(f"boot {i['boot']}: reset {i['reset']}, brownouts {i['brownouts']} | TOF boot {tb[0]}, task core {tb[1]}"
+                  f" priority {tb[2]} | task table: tof {('core ' + i['tof_task'][0] + ' prio ' + i['tof_task'][1]) if i['tof_task'] else 'not listed'}"
+                  f" | bus B interrupt (I2C_EXT1) on CPU {i['i2c1_core'] if i['i2c1_core'] is not None else '? (not in the dump)'}")
+    i1 = [r for r in runs if r["cond"] == "i1" and r["end"]]
+    i2 = [r for r in runs if r["cond"] == "i2" and r["end"]]
+    for r in runs:
+        if not r["end"]:
+            print(f"{r['cond']} (boot {r['boot']}): NOT ENDED: no 'TM {r['cond']} END' (a reset, the log stops, or n not pressed)")
+
+    def imu(r):
+        e = r["end"]
+        ok = e["p999"] < JITTER_P999_US and e["wmax"] < WAKE_MAX_US and e["missed"] == 0 and e["i2c"] == 0
+        return ok, (f"period p99.9 {e['p999']} us (max {e['pmax']}), wake max {e['wmax']} us, missed {e['missed']},"
+                    f" bus A I2C errors {e['i2c']}, load {e['load']} us, loop work max {e['wkmax']} us, {e['secs']:.0f} s")
+
+    def common(r):
+        unintended = {k: v for k, v in r["cuts"].items() if k != EXPECTED_SOAK_CUT}
+        heap = r["heap"]
+        drift = (heap[-1] - heap[0]) if len(heap) > 1 else 0
+        heap_ok = len(heap) > 1 and drift >= -HEAP_DRIFT_B   # a leak lowers the free heap (see the soak rule)
+        return unintended, drift, heap_ok, heap
+
+    def tof_sum(r):
+        w = r["tof"]
+        secs = sum(x["secs"] for x in w)
+        n = sum(x["readings"] for x in w)
+        v = sum(x["valid"] for x in w)
+        return secs, n, v, sum(x["nodata"] for x in w), sum(x["ioerr"] for x in w)
+
+    for r in i1[-1:]:
+        secs, n, v, nd, io = tof_sum(r)
+        rate = n / secs if secs else 0.0
+        vp = 100.0 * v / n if n else 0.0
+        ok2 = abs(rate - TOF_HZ) <= TOF_HZ_TOL and vp >= TOF_VALID_MIN and nd == 0
+        print(f"P1-2 (I1, boot {r['boot']}): ToF {rate:.2f} Hz over {secs:.0f} s of TOF lines, valid {vp:.2f} %, no-data {nd},"
+              f" bus B I/O errors {io}: {'PASS' if ok2 else 'FAIL'}")
+        ok3, txt = imu(r)
+        ok3 = ok3 and io == 0
+        print(f"P1-3 (I1): {txt}, bus B I/O errors {io}: {'PASS' if ok3 else 'FAIL'}")
+        unintended, drift, heap_ok, heap = common(r)
+        ok4 = not unintended and heap_ok and r["end"]["secs"] >= I1_MIN_S - 5
+        print(f"P1-4 (I1): {r['end']['secs']:.0f} s, arm cycles {r['arms']}, link-loss cuts {r['cuts'].get(EXPECTED_SOAK_CUT, 0)},"
+              f" unintended cuts {unintended or 'none'}, heap first/last/min {heap[0] if heap else '?'}/"
+              f"{heap[-1] if heap else '?'}/{min(heap) if heap else '?'} (drift {drift:+d} B): {'PASS' if ok4 else 'FAIL'}"
+              f" (resets and brownouts: boot lines above)")
+    if not i1:
+        print("P1-2 to P1-4: no finished I1 run (key 5, then n)")
+    for r in i2[-1:]:
+        ok3, txt = imu(r)
+        unintended, drift, heap_ok, heap = common(r)
+        secs, n, v, nd, io = tof_sum(r)
+        gaps = r["nodata"]
+        bound = TOF_NODATA_MS + TOF_NODATA_SLACK_MS
+        gap_ok = bool(gaps) and gaps[0] <= bound
+        ok5 = ok3 and not unintended and r["arms"] > 0 and gap_ok
+        after = "readings resumed without a re-init" if r["resumed"] else "no readings after the unplug (stays dead until reset)"
+        last_state = r["tof"][-1]["state"] if r["tof"] else "?"
+        print(f"P1-5 (I2, boot {r['boot']}): IMU {txt} | arm cycles {r['arms']}, link-loss cuts"
+              f" {r['cuts'].get(EXPECTED_SOAK_CUT, 0)}, unintended cuts {unintended or 'none'} | ToF last reading -> first"
+              f" no-data {gaps[0] if gaps else '?'} ms (deadline {TOF_NODATA_MS:.0f} ms, accepted <= {bound:.0f} ms),"
+              f" no-data episodes {len(gaps)}, bus B I/O errors {io}, {after}, ToF state at the end {last_state}"
+              f" | heap drift {drift:+d} B: {'PASS' if ok5 else 'FAIL'}")
+    if not i2:
+        print("P1-5: no finished I2 run (key 6, then n)")
 
 
 if __name__ == "__main__":

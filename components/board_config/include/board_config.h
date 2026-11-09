@@ -23,6 +23,7 @@ static_assert(kPwmPeriodTicks < 65536, "MCPWM timer peak is 16 bits");
 constexpr uint32_t kBenchDutyCapPermille = 200;
 static_assert(kBenchDutyCapPermille <= 300, "bench duty cap above 300 permille is not allowed");
 constexpr const char* kBenchBanner = "M7c bench firmware: no motors may be connected";
+constexpr const char* kP1Banner = "P1 integration bench firmware: no motors may be connected";
 
 // Bus A (I2C0): MPU-6500
 constexpr int kImuSda = 1;
@@ -76,6 +77,8 @@ constexpr uint32_t kTofBootTimeoutMs = 100;     // boot is 1.2 ms maximum (DS p.
 constexpr uint16_t kTofMinValidMm = 40;         // minimum guaranteed ranging distance (DS p.21)
 constexpr uint32_t kTofNoDataPeriods = 3;       // publish "no data" after this many silent periods
 constexpr uint32_t kTofPollMs = 2;              // data-ready poll interval near the end of a period
+// Wait after a bus B I/O error before polling again (D-P1-2, Phase 1 integration).
+constexpr uint32_t kTofErrorBackoffMs = kTofPeriodMs;
 // Boot diagnostics (M4 C1). The level sample runs on every init; the scan and the retry run
 // only when the boot poll fails, and never change the init result.
 constexpr uint32_t kTofDiagLevelsAfterReleaseMs = 10;  // SDA/SCL/XSHUT sample after XSHUT release
@@ -238,6 +241,16 @@ constexpr uint32_t kAccelStaleUs = 8000;
 
 // The M7b bench firmware runs for M7b and M7c.
 #define FE_M7B_BENCH (FE_M7B_TEST || FE_M7C_TEST)
+
+// Set to 1 for the Phase 1 integration run (docs/P1_integration_package.md): the M7c bench plus the
+// ToF task on Core 0 (bus B), a 10 s ToF report line, and the synthetic load on from boot. Bench only.
+// Same safety boundary: NO MOTORS, MOSFET STAGE OR SHIELD; 10 kOhm pull-downs on GPIO 4 to 7 only.
+// Nothing from the ToF feeds the safety logic.
+#define FE_P1_INTEGRATION 1
+
+#if FE_P1_INTEGRATION && !FE_M7C_TEST
+#error "FE_P1_INTEGRATION extends the M7c bench: set FE_M7C_TEST to 1"
+#endif
 
 // Bench-only IMU ISR instrumentation (raw-interval min/max, handler cycle count, runtime
 // notify-every-N). Off in flight builds, where the ISR is timestamp, count, notify only.

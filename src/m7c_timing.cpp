@@ -39,7 +39,7 @@ constexpr int64_t kPrintEveryUs = 60LL * 1000 * 1000;
 constexpr int kEndWaitPolls = 40;     // up to 200 ms for Core 1 to publish the final set
 constexpr uint32_t kEndPollMs = 5;
 
-const char* const kConditions[] = {"idle", "udp", "ws", "page", "soak"};
+const char* const kConditions[] = {"idle", "udp", "ws", "page", "soak", "i1", "i2"};
 
 // Only m7c_key() (keys task) and m7c_poll() (bench task) touch this state, both on Core 0; the
 // keys task only sets requests, the bench task acts on them, so nothing is shared mid-update.
@@ -102,6 +102,16 @@ void print_set(const char* phase, const flight::Timing& t) {
              u(wo[1]), u(wo[2]), u(wo[3]));
 }
 
+void set_load(bool on, const char* why) {
+    s_load_on = on;
+    flight::request_load(on ? board::kSyntheticLoadUs : 0);
+    if (on) {
+        ESP_LOGW(TAG, "%s: synthetic load ON, busy-wait %u us after each IMU read", why, u(board::kSyntheticLoadUs));
+    } else {
+        ESP_LOGW(TAG, "%s: synthetic load off", why);
+    }
+}
+
 void end_condition() {
     if (s_active < 0) return;
     const uint32_t req = flight::timing_publish();
@@ -141,7 +151,7 @@ void m7c_boot_report() {
 }
 
 bool m7c_key(int ch) {
-    if ((ch < '0' || ch > '4') && ch != 'n' && ch != 'L') return false;
+    if ((ch < '0' || ch > '6') && ch != 'n' && ch != 'L') return false;
     if (!flight::timing_enabled()) {
         ESP_LOGW(TAG, "KEY %c: latency histograms are off in this build (flash the esp32s3_bench or an esp32s3_r5*"
                       " environment)", ch);
@@ -161,13 +171,7 @@ void m7c_poll() {
     if (!flight::timing_enabled()) return;
     if (s_load_toggle_request) {
         s_load_toggle_request = false;
-        s_load_on = !s_load_on;
-        flight::request_load(s_load_on ? board::kSyntheticLoadUs : 0);
-        if (s_load_on) {
-            ESP_LOGW(TAG, "KEY L: synthetic load ON, busy-wait %u us after each IMU read", u(board::kSyntheticLoadUs));
-        } else {
-            ESP_LOGW(TAG, "KEY L: synthetic load off");
-        }
+        set_load(!s_load_on, "KEY L");
     }
     if (s_end_request) {
         s_end_request = false;
@@ -189,7 +193,12 @@ void m7c_poll() {
 }
 
 const char* m7c_keys_help() {
-    return " | M7c: 0 idle, 1 udp, 2 ws, 3 page, 4 soak (start a condition), n end it, L synthetic load on/off";
+    return " | M7c: 0 idle, 1 udp, 2 ws, 3 page, 4 soak, 5 I1, 6 I2 (start a condition), n end it, L synthetic"
+           " load on/off";
+}
+
+void m7c_set_load(bool on) {
+    if (flight::timing_enabled()) set_load(on, "P1 integration");
 }
 
 #else
@@ -198,5 +207,6 @@ void m7c_boot_report() {}
 bool m7c_key(int) { return false; }
 void m7c_poll() {}
 const char* m7c_keys_help() { return ""; }
+void m7c_set_load(bool) {}
 
 #endif  // FE_M7C_TEST
