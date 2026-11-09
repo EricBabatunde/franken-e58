@@ -1,0 +1,8 @@
+# M7c diagnostic overlay (Core 0 memory corruption under page serving; M5 31 October, M7c
+# 7 November). Bench only, never a flight build. Applied after sdkconfig.defaults.bench.
+# Every heap block gets a head and tail canary and freed memory is filled with a pattern: malloc,
+# free and the once-a-second integrity check in the bench task stop at the first damaged block.
+CONFIG_HEAP_POISONING_COMPREHENSIVE=y
+# Stack-smashing protector on functions with local arrays or address-taken locals (all code,
+# Core 1 included: diagnostic builds' Core 1 timings do not count).
+CONFIG_COMPILER_STACK_CHECK_MODE_STRONG=y

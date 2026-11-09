@@ -1,0 +1,5 @@
+# M7c diagnostic isolation overlay, after sdkconfig.defaults.heapdiag: LittleFS reads through
+# esp_flash_read() instead of the memory-mapped partition (D-M5-04 reversed for this test only).
+# Every file read then disables the cache on both cores, so Core 1 timings from this build do not
+# count. Bench only, never a flight build.
+CONFIG_LITTLEFS_MMAP_PARTITION=n

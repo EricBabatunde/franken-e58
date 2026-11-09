@@ -19,6 +19,7 @@ constexpr uint8_t kRegAccelConfig2 = 0x1D;  // RM p.15: [3] ACCEL_FCHOICE_B, [2:
 constexpr uint8_t kRegIntPinCfg = 0x37;     // RM p.29
 constexpr uint8_t kRegIntEnable = 0x38;     // RM p.29-30
 constexpr uint8_t kRegAccelXoutH = 0x3B;    // RM p.7, p.31-35: 14-byte data block
+constexpr uint8_t kRegGyroXoutH = 0x43;     // RM p.7: GYRO_XOUT_H, 6 bytes to GYRO_ZOUT_L (verify against datasheet)
 constexpr uint8_t kRegPwrMgmt1 = 0x6B;      // RM p.41
 constexpr uint8_t kRegWhoAmI = 0x75;        // RM p.44
 
@@ -69,6 +70,7 @@ hal_i2c::Device s_dev{};
 bool s_have_dev = false;
 uint32_t s_gyro_valid_from = 0;
 uint8_t s_burst[14];
+uint8_t s_gyro6[6];   // M7c R5 (d)
 
 // ISR state. Every field has a single writer: the ISR, except where noted.
 TaskHandle_t s_task = nullptr;            // written once before the handler is installed
@@ -244,6 +246,18 @@ esp_err_t read_burst(uint32_t t_us, RawSample* out) {
         out->gyro[i] = be16(&s_burst[8 + 2 * i]);
     }
     out->temp = be16(&s_burst[6]);
+    return ESP_OK;
+}
+
+esp_err_t read_gyro(uint32_t t_us, RawSample* out) {
+    const esp_err_t e = hal_i2c::read_reg8(s_dev, kRegGyroXoutH, s_gyro6, sizeof(s_gyro6), kTimeoutMs);
+    if (e != ESP_OK) {
+        return e;
+    }
+    out->t_us = t_us;
+    for (int i = 0; i < 3; ++i) {
+        out->gyro[i] = be16(&s_gyro6[2 * i]);
+    }
     return ESP_OK;
 }
 

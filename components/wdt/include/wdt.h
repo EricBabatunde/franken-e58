@@ -43,6 +43,7 @@ struct IsrWindow {
     uint32_t cyc_sum = 0;
     uint32_t late_max_ticks = 0; // alarm to callback entry, timer ticks (board::kWdtResolutionHz)
     uint32_t late_sum_ticks = 0;
+    uint32_t late_max_t_us = 0;  // M7c: 32-bit esp_timer time at the callback entry of the worst delay
 };
 
 StartReport start();               // flight task only (Core 1), once, after the IMU interrupt is installed

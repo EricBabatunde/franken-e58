@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal_mcpwm.h"
+#include "sdkconfig.h"
 #include "seqlock.h"
 #include "setpoint.h"
 #include "wdt.h"
@@ -40,6 +41,15 @@ std::atomic<bool> s_int_request{true};
 std::atomic<uint8_t> s_fault_request{0};      // Fault, written by Core 0, cleared by the flight task
 std::atomic<bool> s_boot_request{false};
 bool s_outputs_ok = false;
+// M7c timing (bench builds). Requests from Core 0 are counters and a value: plain loads and stores,
+// one writer each (no read-modify-write on Core 1).
+std::atomic<uint32_t> s_tm_epoch_req{0};
+std::atomic<uint32_t> s_tm_pub_req{0};
+std::atomic<uint32_t> s_load_req{0};
+#if CONFIG_FE_LATENCY_HIST
+SeqlockSlot<Timing> s_timing_slot;
+Timing s_tm;                                  // Core 1 running set (static: about 3 KB)
+#endif
 
 // ---- Core 1 state (flight task only). File-scope objects, constructed before app_main (no
 // function-local statics: their thread-safe guard could take a lock).
@@ -91,6 +101,26 @@ void record_all(const safety::Outputs& o) {
     for (int i = 0; i < o.n_events; ++i) record(o.events[i], 0, 0);
     if (o.n_events > 0) publish_events();
 }
+
+#if CONFIG_FE_LATENCY_HIST
+// New condition epoch: every counter and histogram to zero, in place (no 3 KB temporary on the
+// flight task's stack).
+void timing_clear(Timing& t, uint32_t epoch, int64_t now_us, uint32_t load_us) {
+    t.epoch = epoch;
+    t.t_first_us = now_us;
+    t.t_last_us = now_us;
+    t.iterations = t.wakes = t.missed = t.timeouts = t.i2c_errors = t.overruns = t.accel_stale = 0;
+    t.load_us = load_us;
+    t.load_changes = 0;
+    t.period_dev_min = 0;
+    t.period_dev_max = 0;
+    t.period.clear();
+    t.wake.clear();
+    t.burst14.clear();
+    t.burst6.clear();
+    t.work.clear();
+}
+#endif
 
 [[noreturn]] void park() {
     for (;;) vTaskDelay(portMAX_DELAY);
@@ -203,9 +233,31 @@ void task(void*) {
     uint32_t rec_episode = 0;
     int64_t rec_last_us = 0;
     bool rec_exhausted = false;
+    // M7c: accelerometer age (every build) and the R5 (d) schedule.
+    int64_t accel_t_us = 0;          // wake time of the last good full (14-byte) read; 0: none yet
+#if CONFIG_FE_R5_GYRO_ONLY
+    uint32_t since_full = 0;         // data frames since the last good full read
+#endif
+#if CONFIG_FE_LATENCY_HIST
+    uint32_t prev_wake = 0;
+#endif
+#if CONFIG_FE_LATENCY_HIST
+    timing_clear(s_tm, s_tm_epoch_req.load(std::memory_order_acquire), esp_timer_get_time(), 0);
+    int64_t t_tm_pub = esp_timer_get_time();
+    const uint32_t cyc_per_us = kCpuMhz;
+#endif
 
     for (;;) {
         const int64_t now0 = esp_timer_get_time();
+#if CONFIG_FE_LATENCY_HIST
+        // Publish before the wait (outside the measured work): every second, or at once on request.
+        const uint32_t pub = s_tm_pub_req.load(std::memory_order_acquire);
+        if (pub != s_tm.publish_ack || now0 - t_tm_pub >= static_cast<int64_t>(board::kTimingPublishUs)) {
+            s_tm.publish_ack = pub;
+            s_timing_slot.write(s_tm);
+            t_tm_pub = now0;
+        }
+#endif
         if (now0 - t_win >= kWindowUs) {
             const uint32_t raw = drv_mpu6500::raw_pulses();
             s_win.index = ++index;
@@ -230,11 +282,28 @@ void task(void*) {
         wdt::heartbeat(woke);
         const uint32_t c_wake = esp_cpu_get_cycle_count();
         s_win.iterations++;
+#if CONFIG_FE_LATENCY_HIST
+        const uint32_t load_us = s_load_req.load(std::memory_order_relaxed);
+        {
+            const uint32_t ep = s_tm_epoch_req.load(std::memory_order_acquire);
+            if (ep != s_tm.epoch) timing_clear(s_tm, ep, woke64, load_us);
+            if (load_us != s_tm.load_us) {
+                s_tm.load_changes++;
+                s_tm.load_us = load_us;
+            }
+            s_tm.iterations++;
+            s_tm.t_last_us = woke64;
+        }
+#endif
 
         if (n > 0) {
             wait = kWaitTicks;
             s_win.wakes++;
             if (n > 1) s_win.missed += n - 1;
+#if CONFIG_FE_LATENCY_HIST
+            s_tm.wakes++;
+            if (n > 1) s_tm.missed += n - 1;
+#endif
             const uint32_t t_irq = drv_mpu6500::last_notify_us();
             // A pulse that arrived after the wake stamp gives a negative difference: clamp to 0.
             const int32_t lat_s = static_cast<int32_t>(woke - t_irq);
@@ -242,6 +311,16 @@ void task(void*) {
             keep_min(s_win.lat_min, lat);
             keep_max(s_win.lat_max, lat);
             s_win.lat_sum += lat;
+#if CONFIG_FE_LATENCY_HIST
+            s_tm.wake.add(lat);
+            if (have_prev) {  // consecutive data wake-ups: loop period
+                const int32_t dev = static_cast<int32_t>(woke - prev_wake) - static_cast<int32_t>(board::kNominalPeriodUs);
+                s_tm.period.add(static_cast<uint32_t>(dev < 0 ? -dev : dev));
+                if (s_tm.period.count == 1 || dev < s_tm.period_dev_min) s_tm.period_dev_min = dev;
+                if (s_tm.period.count == 1 || dev > s_tm.period_dev_max) s_tm.period_dev_max = dev;
+            }
+            prev_wake = woke;
+#endif
             if (have_prev) {
                 const uint32_t iv = t_irq - prev_irq;
                 s_win.iv_n++;
@@ -253,14 +332,37 @@ void task(void*) {
             prev_irq = t_irq;
             have_prev = true;
 
+            // Full 14-byte burst (accelerometer, temperature, gyro of one sample) every frame, or with
+            // CONFIG_FE_R5_GYRO_ONLY every board::kR5AccelDivider frames and the 6-byte gyro read
+            // otherwise; a failed full read is repeated on the next frame. `sample` keeps the last
+            // accelerometer value between full reads; its age is checked below.
+#if CONFIG_FE_R5_GYRO_ONLY
+            const bool full = accel_t_us == 0 || since_full + 1 >= board::kR5AccelDivider;
+#else
+            const bool full = true;
+#endif
             const uint32_t t0 = static_cast<uint32_t>(esp_timer_get_time());
-            const esp_err_t e = drv_mpu6500::read_burst(t_irq, &sample);
+            const esp_err_t e = full ? drv_mpu6500::read_burst(t_irq, &sample) : drv_mpu6500::read_gyro(t_irq, &sample);
             const uint32_t dur = static_cast<uint32_t>(esp_timer_get_time()) - t0;
             if (e != ESP_OK) {
                 s_win.i2c_errors++;
                 s_st.i2c_errors++;
                 good_reads = 0;
+#if CONFIG_FE_LATENCY_HIST
+                s_tm.i2c_errors++;
+#endif
             } else {
+                if (full) accel_t_us = woke64;
+#if CONFIG_FE_R5_GYRO_ONLY
+                since_full = full ? 0 : since_full + 1;
+#endif
+#if CONFIG_FE_LATENCY_HIST
+                if (full) {
+                    s_tm.burst14.add(dur);
+                } else {
+                    s_tm.burst6.add(dur);
+                }
+#endif
                 s_win.reads++;
                 keep_min(s_win.burst_min, dur);
                 keep_max(s_win.burst_max, dur);
@@ -282,11 +384,30 @@ void task(void*) {
                     }
                 }
             }
+#if CONFIG_FE_LATENCY_HIST
+            // Synthetic compute load after the IMU read (board::kSyntheticLoadUs, key L): a busy-wait
+            // on the cycle counter standing in for filters, attitude, PID and mixer.
+            if (load_us != 0) {
+                const uint32_t c_load = esp_cpu_get_cycle_count();
+                while (esp_cpu_get_cycle_count() - c_load < load_us * cyc_per_us) {
+                }
+            }
+#endif
         } else {
             s_win.timeouts++;
             have_prev = false;
             wait = 1;
+#if CONFIG_FE_LATENCY_HIST
+            s_tm.timeouts++;
+#endif
         }
+        // Accelerometer age (M7c addition 1): stale after board::kAccelStaleUs without a good full
+        // read; the rest, tilt and accelerometer arm checks then fail.
+        const int64_t accel_age = accel_t_us == 0 ? INT64_MAX : woke64 - accel_t_us;
+        const bool accel_stale = accel_age > static_cast<int64_t>(board::kAccelStaleUs);
+#if CONFIG_FE_LATENCY_HIST
+        if (accel_stale) s_tm.accel_stale++;
+#endif
         const uint32_t last_pulse = drv_mpu6500::last_notify_us();
         // The pulse is read after the burst read, so a newer pulse than the wake stamp is possible
         // (late wake): that is not missing, and the unsigned difference would wrap to ~4295 s.
@@ -355,9 +476,9 @@ void task(void*) {
         in.imu_last_us = woke64 - static_cast<int64_t>(since);
         in.imu_healthy = good_reads >= board::kImuHealthySamples && !missing;
         in.gyro_cal_done = rest.cal_done();
-        in.at_rest = rest.at_rest(woke64);
-        in.accel_ok = rest.accel_ok();
-        in.tilt_ok = rest.tilt_ok();
+        in.at_rest = rest.at_rest(woke64) && !accel_stale;
+        in.accel_ok = rest.accel_ok() && !accel_stale;
+        in.tilt_ok = rest.tilt_ok() && !accel_stale;
         in.hard_cut = hard;
         in.wd_alive = wd_alive;
 
@@ -469,7 +590,13 @@ void task(void*) {
         if (work > kOverrunCycles) {
             s_win.overruns++;
             s_st.overruns++;
+#if CONFIG_FE_LATENCY_HIST
+            s_tm.overruns++;
+#endif
         }
+#if CONFIG_FE_LATENCY_HIST
+        s_tm.work.add(work / cyc_per_us);
+#endif
         keep_max(s_st.sp_retries_max, s_win.sp_retries_max);
 
         if (++since_status >= kStatusEvery || out.n_events > 0) {
@@ -508,6 +635,11 @@ void task(void*) {
             s_st.wd_count = wd_count;
             s_st.rec_episode = rec_episode;
             s_st.rec_exhausted = rec_exhausted;
+            s_st.accel_stale = accel_stale;
+            s_st.accel_age_us = accel_age > static_cast<int64_t>(UINT32_MAX) ? UINT32_MAX : static_cast<uint32_t>(accel_age);
+#if CONFIG_FE_LATENCY_HIST
+            s_st.load_us = load_us;
+#endif
             s_status_slot.write(s_st);
         }
     }
@@ -544,5 +676,28 @@ void request_imu_int(bool enabled) { s_int_request.store(enabled, std::memory_or
 void request_fault(Fault f) { s_fault_request.store(static_cast<uint8_t>(f), std::memory_order_release); }
 
 void request_boot_state() { s_boot_request.store(true, std::memory_order_release); }
+
+// M7c timing requests (Core 0 is the only writer of each counter).
+uint32_t timing_reset() {
+    const uint32_t e = s_tm_epoch_req.load(std::memory_order_relaxed) + 1;
+    s_tm_epoch_req.store(e, std::memory_order_release);
+    return e;
+}
+
+uint32_t timing_publish() {
+    const uint32_t p = s_tm_pub_req.load(std::memory_order_relaxed) + 1;
+    s_tm_pub_req.store(p, std::memory_order_release);
+    return p;
+}
+
+void request_load(uint32_t load_us) { s_load_req.store(load_us, std::memory_order_relaxed); }
+
+#if CONFIG_FE_LATENCY_HIST
+bool timing(Timing* out) { return s_timing_slot.read(out); }
+bool timing_enabled() { return true; }
+#else
+bool timing(Timing*) { return false; }
+bool timing_enabled() { return false; }
+#endif
 
 }  // namespace flight

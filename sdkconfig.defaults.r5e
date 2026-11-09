@@ -1,0 +1,6 @@
+# R5 experiment (e), M7c bench only: the best combination from the (a) to (d) runs of
+# 7 November 2026, which is (b) + (c). (d) is left out: it lowered the burst average (481 us) but
+# not the worst frame (loop work max 773 us against 783 us baseline), and it changes the signal
+# chain (accelerometer at 250 Hz).
+CONFIG_FE_R5_I2C_IRAM=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y

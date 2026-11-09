@@ -10,22 +10,32 @@ shift || true
 defaults=("$@")
 [ ${#defaults[@]} -eq 0 ] && defaults=(sdkconfig.defaults)
 [ -f "$gen" ] || { echo "Generated file $gen not found. Run 'pio run' first."; exit 2; }
-bad=0
-n=0
+# Later files override earlier ones, as in the build (SDKCONFIG_DEFAULTS order): only the last
+# value of each option is checked.
+declare -A val_of src_of
+order=()
 for d in "${defaults[@]}"; do
   [ -f "$d" ] || { echo "Defaults file $d not found."; exit 2; }
   while IFS= read -r line; do
     key="${line%%=*}"
-    val="${line#*=}"
-    if [ "$val" = "n" ]; then want="# $key is not set"; else want="$line"; fi
-    n=$((n + 1))
-    if grep -qxF "$want" "$gen"; then
-      echo "OK        $line"
-    else
-      echo "MISMATCH  $line   ($d)"
-      bad=1
-    fi
+    [ -z "${val_of[$key]+x}" ] && order+=("$key")
+    val_of[$key]="${line#*=}"
+    src_of[$key]="$d"
   done < <(grep -E '^CONFIG_' "$d")
+done
+bad=0
+n=0
+for key in "${order[@]}"; do
+  val="${val_of[$key]}"
+  line="$key=$val"
+  if [ "$val" = "n" ]; then want="# $key is not set"; else want="$line"; fi
+  n=$((n + 1))
+  if grep -qxF "$want" "$gen"; then
+    echo "OK        $line"
+  else
+    echo "MISMATCH  $line   (${src_of[$key]})"
+    bad=1
+  fi
 done
 if [ $bad -eq 0 ]; then echo "verify_sdkconfig: $gen: $n/$n OK"; else echo "verify_sdkconfig: $gen: MISMATCH"; fi
 exit $bad

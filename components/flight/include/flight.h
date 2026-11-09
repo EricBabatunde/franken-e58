@@ -4,6 +4,7 @@
 #include "drv_mpu6500.h"
 #include "esp_err.h"
 #include "hal_i2c.h"
+#include "latency_hist.h"
 #include "safety.h"
 #include "wdt.h"
 
@@ -18,6 +19,10 @@
 // heartbeat every iteration, turns the watchdog hard latch into a safety cut, clears the latch
 // only on entering ARMED, recovers the IMU while SAFE or DISARMED, retries the IMU init at boot
 // (board::kImuBootRetry) and runs the console fault injections.
+//
+// M7c (bench builds, CONFIG_FE_LATENCY_HIST): latency histograms per condition, the synthetic
+// compute load, and the R5 (d) read schedule (CONFIG_FE_R5_GYRO_ONLY). Every build: an
+// accelerometer value older than board::kAccelStaleUs fails the rest, tilt and accelerometer checks.
 namespace flight {
 
 constexpr int kEventLog = 16;
@@ -146,7 +151,39 @@ struct Status {
     uint32_t rec_ok = 0;
     uint32_t rec_episode = 0;        // attempts in the current episode
     bool rec_exhausted = false;      // board::kRecoveryAttempts failed: Core 0 decides restart or BOOT
+    // M7c.
+    bool accel_stale = false;        // last full read older than board::kAccelStaleUs
+    uint32_t accel_age_us = 0;
+    uint32_t load_us = 0;            // synthetic load in effect (0: off)
 };
+
+// M7c latency histograms for one condition (bench builds, CONFIG_FE_LATENCY_HIST). Core 1 keeps
+// the running set and publishes it every board::kTimingPublishUs, or at once when Core 0 asks
+// (timing_publish). Core 0 starts a new condition with timing_reset(): Core 1 clears the set at its
+// next iteration and tags it with the new epoch.
+struct Timing {
+    uint32_t epoch = 0;              // condition epoch these counts belong to
+    uint32_t publish_ack = 0;        // the last timing_publish() request served
+    int64_t t_first_us = 0;          // first iteration in this epoch
+    int64_t t_last_us = 0;
+    uint32_t iterations = 0;
+    uint32_t wakes = 0;              // data wake-ups
+    uint32_t missed = 0;             // notifications beyond one per wake-up
+    uint32_t timeouts = 0;           // waits without data
+    uint32_t i2c_errors = 0;
+    uint32_t overruns = 0;           // iterations longer than board::kLoopOverrunUs
+    uint32_t accel_stale = 0;        // iterations with a stale accelerometer
+    uint32_t load_us = 0;            // synthetic load at the last iteration
+    uint32_t load_changes = 0;       // load toggled within this epoch (the condition is mixed)
+    int32_t period_dev_min = 0;      // signed wake-to-wake minus board::kNominalPeriodUs
+    int32_t period_dev_max = 0;
+    latency::Hist<200, 1> period;    // |wake-to-wake - board::kNominalPeriodUs|, consecutive data wakes
+    latency::Hist<100, 1> wake;      // data-ready interrupt to task wake-up
+    latency::Hist<150, 10> burst14;  // 14-byte burst read
+    latency::Hist<150, 10> burst6;   // 6-byte gyro read (R5 d only)
+    latency::Hist<100, 10> work;     // wake-up to the end of the iteration, every iteration
+};
+
 
 struct StartReport {
     bool done = false;
@@ -193,5 +230,12 @@ bool recovery_log(RecoveryLog* out);
 // Core 0, after rec_exhausted and the restart limit (board::kRestartLimit): the machine goes to
 // BOOT (gates low, final) unless ARMED.
 void request_boot_state();
+
+// M7c (bench builds, CONFIG_FE_LATENCY_HIST; no effect otherwise). Core 0 only.
+bool timing(Timing* out);              // the latest published set
+uint32_t timing_reset();               // new condition: returns its epoch
+uint32_t timing_publish();             // publish at the next iteration: returns the request number
+void request_load(uint32_t load_us);   // synthetic load after each IMU read (0: off)
+bool timing_enabled();                 // CONFIG_FE_LATENCY_HIST
 
 }  // namespace flight

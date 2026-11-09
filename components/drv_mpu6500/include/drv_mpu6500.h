@@ -64,6 +64,10 @@ esp_err_t soft_reset();
 // One 14-byte transfer into `out`. No allocation; uses a static buffer.
 esp_err_t read_burst(uint32_t t_us, RawSample* out);
 
+// M7c R5 experiment (d): one 6-byte transfer from GYRO_XOUT_H (0x43) into out->gyro and out->t_us;
+// out->accel and out->temp are left as they were. No allocation; uses a static buffer.
+esp_err_t read_gyro(uint32_t t_us, RawSample* out);
+
 // First 32-bit timestamp at which gyro data is trusted: 35 ms after the last DEVICE_RESET
 // (gyro start-up from sleep, PS p.7). Compare with wrap-safe signed subtraction.
 uint32_t gyro_valid_from_us();

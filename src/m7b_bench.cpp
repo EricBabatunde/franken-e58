@@ -2,7 +2,7 @@
 
 #include "board_config.h"
 
-#if FE_M7B_TEST
+#if FE_M7B_BENCH
 
 #include <cmath>
 #include <cstdio>
@@ -23,6 +23,7 @@
 #include "hal_mcpwm.h"
 #include "http_static.h"
 #include "link.h"
+#include "m7c_timing.h"
 #include "safety.h"
 #include "sdkconfig.h"
 #include "udp_server.h"
@@ -225,14 +226,14 @@ void print_status(const flight::Status& s) {
     ESP_LOGI(TAG, "ST %s%s last_cut %s | arm blocked by: %s | sp %s | out duty %u permille, gates %s | imu %s, since"
                   " pulse %.1f ms, int %s | %s | rest %s tilt %.1f deg accel %s | arms %u cuts %u refusals %u disarms %u"
                   " | overruns %u sp giveups %u torn %u | wd %s alarms %u hard latch %u | rec attempts %u ok %u episode %u%s"
-                  " | flash writes %s",
+                  " | flash writes %s | accel age %.1f ms%s | load %u us",
              safety::name(s.state), s.latched ? " (latched)" : "", safety::name(s.last_cut), block, spbuf,
              s.duty_permille, s.forced_low ? "forced low" : "released", s.imu_healthy ? "healthy" : "UNHEALTHY",
              s.since_pulse_us / 1000.0, s.int_enabled ? "on" : "OFF", cal, s.at_rest ? "yes" : "no", tilt_deg(s.accel),
              s.accel_ok ? "ok" : "BAD", u(s.arms), u(s.cuts), u(s.refusals), u(s.disarms), u(s.overruns),
              u(s.sp_giveups), u(s.sp_torn), s.wd_alive ? "alive" : "DEAD", u(s.wd_count), s.hard_latched,
              u(s.rec_attempts), u(s.rec_ok), u(s.rec_episode), s.rec_exhausted ? " EXHAUSTED" : "",
-             s.flash_ok ? "allowed" : "REFUSED");
+             s.flash_ok ? "allowed" : "REFUSED", s.accel_age_us / 1000.0, s.accel_stale ? " STALE" : "", u(s.load_us));
 }
 
 lk::Counters s_prev[sp::kTransports];
@@ -286,10 +287,10 @@ void print_window(const flight::Window& w) {
              cyc_us(wr_in_max[1]), rssi, u(heap_free()), u(heap_min()));
     const double tick_us = 1e6 / board::kWdtResolutionHz;
     ESP_LOGI(TAG, "w%02u wdt | alarms %u (expected %.0f) | ISR body min/avg/max %.2f/%.2f/%.2f us | alarm -> ISR entry"
-                  " avg/max %.2f/%.2f us",
+                  " avg/max %.2f/%.2f us (worst at t=%u us)",
              u(w.index), u(w.wd.count), w.length_us / static_cast<double>(board::kWdtPeriodUs),
              cyc_us(u_min(w.wd.cyc_min)), cyc_us(avg(w.wd.cyc_sum, w.wd.count)), cyc_us(w.wd.cyc_max),
-             avg(w.wd.late_sum_ticks, w.wd.count) * tick_us, w.wd.late_max_ticks * tick_us);
+             avg(w.wd.late_sum_ticks, w.wd.count) * tick_us, w.wd.late_max_ticks * tick_us, u(w.wd.late_max_t_us));
 }
 
 // Task layout (M7b acceptance 6). Core 1 may run only the flight task, IDLE1 and ipc1 (plus
@@ -397,6 +398,7 @@ void keys_task(void*) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+        if (m7c_key(ch)) continue;  // M7c: 0 to 4, n, L (labels and the synthetic load only)
         switch (ch) {
             case 'm':
                 int_on = !int_on;
@@ -446,8 +448,9 @@ void keys_task(void*) {
                 break;
             default:
                 ESP_LOGI(TAG, "keys: m = data-ready interrupt off/on, s = summary, h = stall 20 ms, H = stall 1 s with"
-                              " interrupts masked (reset), T = stall 10 s (reset), X = abort (reset), z = IMU sleep."
-                              " Nothing here can arm or drive the outputs.");
+                              " interrupts masked (reset), T = stall 10 s (reset), X = abort (reset), z = IMU sleep%s."
+                              " Nothing here can arm or drive the outputs.",
+                         m7c_keys_help());
                 break;
         }
     }
@@ -526,6 +529,63 @@ void config_report() {
              board::kSetpointCriticalSection ? "ON" : "OFF", board::kImuBootRetry ? "ON" : "OFF (instrument only)");
 }
 
+// M7c diagnostics (esp32s3_heapdiag*): heap integrity walk from Core 0, once a second (Core 1
+// never uses the heap, so it never waits on these heap locks). Internal RAM only: with
+// comprehensive poisoning the walk verifies every free byte while holding the heap lock, and the
+// 8 MB PSRAM heap took over 100 ms and tripped the interrupt watchdog (15:00 and 15:02 logs).
+// PSRAM blocks are still checked by the poisoning on every malloc and free. The walk prints the
+// first damaged block itself; this adds the count and the walk time.
+#if CONFIG_HEAP_POISONING_COMPREHENSIVE
+uint32_t s_hc_runs = 0;
+uint32_t s_hc_fail = 0;
+int64_t s_hc_max_us = 0;
+
+void heap_check() {
+    const int64_t t0 = esp_timer_get_time();
+    const bool ok = heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true);
+    const int64_t dt = esp_timer_get_time() - t0;
+    s_hc_runs++;
+    if (dt > s_hc_max_us) s_hc_max_us = dt;
+    if (!ok) {
+        s_hc_fail++;
+        ESP_LOGE(TAG, "HEAPCHK: CORRUPTION found (details above) | run %u, failures %u | walk %lld us | heap %u min %u",
+                 u(s_hc_runs), u(s_hc_fail), static_cast<long long>(dt), u(heap_free()), u(heap_min()));
+    } else if (s_hc_runs % 10 == 0) {
+        ESP_LOGI(TAG, "HEAPCHK: ok | runs %u, failures %u | walk last/max %lld/%lld us", u(s_hc_runs), u(s_hc_fail),
+                 static_cast<long long>(dt), static_cast<long long>(s_hc_max_us));
+    }
+}
+#else
+void heap_check() {}
+#endif
+
+void diag_report() {
+#if CONFIG_HEAP_POISONING_COMPREHENSIVE || CONFIG_COMPILER_STACK_CHECK_MODE_STRONG
+    ESP_LOGW(TAG, "DIAG: diagnostic build, Core 1 timings do not count | heap poisoning %s | stack protector %s |"
+                  " LittleFS memory-mapped %s | heap integrity check (internal RAM) every 1 s %s",
+#if CONFIG_HEAP_POISONING_COMPREHENSIVE
+             "comprehensive",
+#else
+             "off",
+#endif
+#if CONFIG_COMPILER_STACK_CHECK_MODE_STRONG
+             "strong",
+#else
+             "off",
+#endif
+#if CONFIG_LITTLEFS_MMAP_PARTITION
+             "yes",
+#else
+             "NO (isolation build)",
+#endif
+#if CONFIG_HEAP_POISONING_COMPREHENSIVE
+             "on");
+#else
+             "off");
+#endif
+#endif
+}
+
 void bench_task(void*) {
     for (int i = 0; i < 3; ++i) {
         ESP_LOGW(TAG, "################ %s ################", board::kBenchBanner);
@@ -537,6 +597,8 @@ void bench_task(void*) {
              3.3 * board::kBenchDutyCapPermille / 1000.0);
     boot_report();
     config_report();
+    m7c_boot_report();
+    diag_report();
 
     s_out_report = hal_mcpwm::init();
     const hal_mcpwm::InitReport& o = s_out_report;
@@ -610,8 +672,9 @@ void bench_task(void*) {
     ESP_LOGI(TAG, "INTERRUPTS (esp_intr_dump) ----------------------------------");
     esp_intr_dump(stdout);
     ESP_LOGI(TAG, "keys (UART0 console): m = data-ready off/on, s = summary, h = stall 20 ms, H = stall 1 s masked,"
-                  " T = stall 10 s, X = abort, z = IMU sleep. Client: .venv/bin/python tools/control_client.py --transport"
-                  " udp|ws");
+                  " T = stall 10 s, X = abort, z = IMU sleep%s. Client: .venv/bin/python tools/control_client.py"
+                  " --transport udp|ws",
+             m7c_keys_help());
 
     static flight::EventLog log;
     static flight::Window win;
@@ -653,6 +716,7 @@ void bench_task(void*) {
         if (now >= next_status) {
             next_status += kStatusMs * 1000;
             if (have_status) print_status(s);
+            heap_check();
         }
         // D5: after board::kRecoveryAttempts failed recoveries, a controlled restart (at most
         // board::kRestartLimit per power-on, RTC memory), never while ARMED; then BOOT, gates low.
@@ -676,6 +740,7 @@ void bench_task(void*) {
             s_summary_request = false;
             print_summary();
         }
+        m7c_poll();
         vTaskDelay(pdMS_TO_TICKS(kPollMs));
     }
 }
@@ -688,4 +753,4 @@ void m7b_start() { xTaskCreatePinnedToCore(bench_task, "m7b_bench", 8192, nullpt
 
 void m7b_start() {}
 
-#endif  // FE_M7B_TEST
+#endif  // FE_M7B_BENCH

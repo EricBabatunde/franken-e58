@@ -3,6 +3,9 @@
 sdkconfig.*
 !sdkconfig.defaults
 !sdkconfig.defaults.bench
+!sdkconfig.defaults.r5[b-e]
+!sdkconfig.defaults.heapdiag
+!sdkconfig.defaults.nommap
 .claude/settings.local.json
 docs/third_party/
 logs/

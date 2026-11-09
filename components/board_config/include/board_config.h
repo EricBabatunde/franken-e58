@@ -22,7 +22,7 @@ static_assert(kPwmPeriodTicks < 65536, "MCPWM timer peak is 16 bits");
 // (M7b: 10 kOhm pull-downs from GPIO 4 to 7 to GND imitate the shield).
 constexpr uint32_t kBenchDutyCapPermille = 200;
 static_assert(kBenchDutyCapPermille <= 300, "bench duty cap above 300 permille is not allowed");
-constexpr const char* kBenchBanner = "M7b bench firmware: no motors may be connected";
+constexpr const char* kBenchBanner = "M7c bench firmware: no motors may be connected";
 
 // Bus A (I2C0): MPU-6500
 constexpr int kImuSda = 1;
@@ -176,6 +176,18 @@ constexpr uint32_t kFaultStallShortUs = 20 * 1000;       // 'h': interrupts on
 constexpr uint32_t kFaultStallMaskedUs = 1000 * 1000;    // 'H': interrupts masked on Core 1
 constexpr uint32_t kFaultStallLongUs = 10 * 1000 * 1000; // 'T': interrupts on (task watchdog)
 
+// ---- M7c timing (bench builds with CONFIG_FE_LATENCY_HIST). The synthetic load is the budget for
+// filters, attitude, PID and mixer (blueprint 4.3): a busy-wait after each IMU read, console key L.
+constexpr uint32_t kSyntheticLoadUs = 150;
+constexpr uint32_t kNominalPeriodUs = 1000;      // loop-period histogram: |wake-to-wake - this|
+constexpr uint32_t kTimingPublishUs = 1000 * 1000;
+// R5 (d), CONFIG_FE_R5_GYRO_ONLY: the 14-byte burst (accelerometer and gyro of one sample) every
+// kR5AccelDivider frames, the 6-byte gyro read otherwise: accelerometer at 250 Hz.
+constexpr uint32_t kR5AccelDivider = 4;
+// An accelerometer value older than this is stale: the rest, tilt and accelerometer arm checks
+// fail (M7c addition 1; two missed full reads at 250 Hz). Applies to every build.
+constexpr uint32_t kAccelStaleUs = 8000;
+
 }  // namespace board
 
 // Set to 0 once the LED GPIO is identified.
@@ -213,14 +225,22 @@ constexpr uint32_t kFaultStallLongUs = 10 * 1000 * 1000; // 'T': interrupts on (
 // Set to 0 to skip the Module 7b bench test (GPTimer heartbeat watchdog, hard latch, panic
 // force-low, fault injection, IMU recovery, task layout). Same safety boundary as M7a: NO MOTORS,
 // MOSFET STAGE OR SHIELD; 10 kOhm pull-downs on GPIO 4 to 7 only.
-#define FE_M7B_TEST 1
+#define FE_M7B_TEST 0
 
-#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST + FE_M7A_TEST + FE_M7B_TEST) > 1
-#error "FE_M2_TEST to FE_M7B_TEST are mutually exclusive: enable only one"
+// Set to 0 to skip the Module 7c bench test: the M7b bench (every M7b protection and key) plus the
+// timing module (src/m7c_timing.cpp): latency histograms, conditions, synthetic load, R5 builds.
+// Same safety boundary: NO MOTORS, MOSFET STAGE OR SHIELD; 10 kOhm pull-downs on GPIO 4 to 7 only.
+#define FE_M7C_TEST 1
+
+#if (FE_M2_TEST + FE_M3_TEST + FE_M4_TEST + FE_M5_TEST + FE_M7A_TEST + FE_M7B_TEST + FE_M7C_TEST) > 1
+#error "FE_M2_TEST to FE_M7C_TEST are mutually exclusive: enable only one"
 #endif
+
+// The M7b bench firmware runs for M7b and M7c.
+#define FE_M7B_BENCH (FE_M7B_TEST || FE_M7C_TEST)
 
 // Bench-only IMU ISR instrumentation (raw-interval min/max, handler cycle count, runtime
 // notify-every-N). Off in flight builds, where the ISR is timestamp, count, notify only.
 // M4 (P5) and M5 (IMU under Wi-Fi) rerun M3 Phase B, and the M7a bench reports the same
 // window figures, so they need it too.
-#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M7A_TEST || FE_M7B_TEST)
+#define FE_IMU_ISR_INSTRUMENT (FE_M3_TEST || FE_M4_TEST || FE_M5_TEST || FE_M7A_TEST || FE_M7B_BENCH)

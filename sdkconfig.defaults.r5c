@@ -1,0 +1,3 @@
+# R5 experiment (c), M7c bench only: 32 KB instruction cache (default 16 KB). Costs 16 KB of
+# internal SRAM (verify against IDF docs).
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y

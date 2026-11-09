@@ -1,0 +1,25 @@
+# R5 experiment (b), M7c: the IMU I2C transfer path in IRAM, only when CONFIG_FE_R5_I2C_IRAM=y
+# (the esp32s3_r5b and esp32s3_r5e bench builds). IDF 5.5.3 has no option for the synchronous
+# master transfer: CONFIG_I2C_ISR_IRAM_SAFE and CONFIG_I2C_MASTER_ISR_HANDLER_IN_IRAM (both on)
+# cover only the interrupt and the command helpers. Whole objects are mapped: the IDF i2c_master
+# driver (i2c_master_transmit_receive and the transaction functions), hal_i2c and drv_mpu6500.
+# Read-only data (format strings of the error logs) stays in flash; this is a speed experiment for
+# a cache-enabled path, not a cache-disabled-safe path.
+
+[mapping:fe_r5_i2c_master]
+archive: libesp_driver_i2c.a
+entries:
+    if FE_R5_I2C_IRAM = y:
+        i2c_master (noflash_text)
+
+[mapping:fe_r5_hal_i2c]
+archive: libhal_i2c.a
+entries:
+    if FE_R5_I2C_IRAM = y:
+        * (noflash_text)
+
+[mapping:fe_r5_drv_mpu6500]
+archive: libdrv_mpu6500.a
+entries:
+    if FE_R5_I2C_IRAM = y:
+        * (noflash_text)

@@ -3,7 +3,7 @@
 Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is ground-up ESP-IDF 5.x (PlatformIO, official `espressif32` platform, `framework = espidf`, no Arduino). The binding spec is `docs/Franken-E58_Full_System_Architecture_Blueprint.md`. Read the sections relevant to the current module before starting. Do not load the whole file unless it is needed.
 
 ## Status
-- Phase 1 (breadboard, props off, no motors). M7b passed and closed 7 November 2026 (`docs/M7b_package.md`). Next module: M7c, spec pending; do not start it until the spec is given. No motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment.
+- Phase 1 (breadboard, props off, no motors). Current module: M7c, see `docs/M7c_package.md` (M7b closed 7 November 2026, `docs/M7b_package.md`). No motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment; the R5 experiment builds are `esp32s3_r5b` to `esp32s3_r5e`.
 - Work on ONE module at a time. Never add features from later modules.
 
 ## Commands

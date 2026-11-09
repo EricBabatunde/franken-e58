@@ -26,6 +26,7 @@ std::atomic<uint32_t> s_count{0};
 uint32_t s_isr_epoch = 0;
 std::atomic<uint32_t> s_w_count{0}, s_w_cyc_min{UINT32_MAX}, s_w_cyc_max{0}, s_w_cyc_sum{0};
 std::atomic<uint32_t> s_w_late_max{0}, s_w_late_sum{0};
+std::atomic<uint32_t> s_w_late_max_t{0};  // M7c: entry time of the worst alarm delay (32-bit esp_timer)
 Trip s_trip;                               // fields written before s_trip_seq (release)
 std::atomic<uint32_t> s_trip_seq{0};
 
@@ -70,13 +71,17 @@ void IRAM_ATTR isr(void*, uint32_t late_ticks) {
         s_w_cyc_sum.store(0, kRelaxed);
         s_w_late_max.store(0, kRelaxed);
         s_w_late_sum.store(0, kRelaxed);
+        s_w_late_max_t.store(0, kRelaxed);
     }
     const uint32_t cyc = esp_cpu_get_cycle_count() - c0;
     s_w_count.store(s_w_count.load(kRelaxed) + 1, kRelaxed);
     if (cyc < s_w_cyc_min.load(kRelaxed)) s_w_cyc_min.store(cyc, kRelaxed);
     if (cyc > s_w_cyc_max.load(kRelaxed)) s_w_cyc_max.store(cyc, kRelaxed);
     s_w_cyc_sum.store(s_w_cyc_sum.load(kRelaxed) + cyc, kRelaxed);
-    if (late_ticks > s_w_late_max.load(kRelaxed)) s_w_late_max.store(late_ticks, kRelaxed);
+    if (late_ticks > s_w_late_max.load(kRelaxed)) {
+        s_w_late_max.store(late_ticks, kRelaxed);
+        s_w_late_max_t.store(now, kRelaxed);
+    }
     s_w_late_sum.store(s_w_late_sum.load(kRelaxed) + late_ticks, kRelaxed);
 }
 
@@ -115,6 +120,7 @@ IsrWindow IRAM_ATTR take_window() {
     w.cyc_sum = s_w_cyc_sum.load(kRelaxed);
     w.late_max_ticks = s_w_late_max.load(kRelaxed);
     w.late_sum_ticks = s_w_late_sum.load(kRelaxed);
+    w.late_max_t_us = s_w_late_max_t.load(kRelaxed);
     s_window_epoch.store(s_window_epoch.load(kRelaxed) + 1, kRelaxed);
     return w;
 }

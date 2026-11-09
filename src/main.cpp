@@ -76,7 +76,7 @@ extern "C" void app_main(void) {
     m7a_start();
 #endif
 
-#if FE_M7B_TEST
+#if FE_M7B_BENCH
     m7b_start();
 #endif
 

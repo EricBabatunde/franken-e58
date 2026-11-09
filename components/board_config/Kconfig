@@ -1,0 +1,29 @@
+menu "Franken-E58 bench options (M7c)"
+
+    # Kconfig options rather than build_flags: PlatformIO build_flags reach src/ only, and these
+    # switches are read by components (flight, drv_mpu6500) and by linker fragments (hal_i2c).
+    # They are set only by the bench overlays (sdkconfig.defaults.bench, sdkconfig.defaults.r5*).
+    # Never set them in sdkconfig.defaults (the flight build).
+
+    config FE_LATENCY_HIST
+        bool "M7c latency histograms and synthetic load (bench only)"
+        default n
+        help
+            Static histograms on Core 1 (loop period, wake-up, burst, loop work), published to
+            Core 0 through a seqlock, and the console-toggled synthetic compute load (key L).
+
+    config FE_R5_I2C_IRAM
+        bool "R5 (b): IMU I2C transfer path in IRAM (bench experiment)"
+        default n
+        help
+            Maps the IDF i2c_master object, hal_i2c and drv_mpu6500 to IRAM through the linker
+            fragment in components/hal_i2c/linker.lf.
+
+    config FE_R5_GYRO_ONLY
+        bool "R5 (d): 6-byte gyro read every frame, 14-byte read every 4th frame (bench experiment)"
+        default n
+        help
+            The accelerometer is read at 1 kHz / board::kR5AccelDivider by the full burst, so each
+            accelerometer value has a gyro value from the same sample.
+
+endmenu
