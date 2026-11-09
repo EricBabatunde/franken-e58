@@ -6,8 +6,3 @@ CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 
 # M7c: latency histograms on Core 1 and the console-toggled synthetic load (key L)
 CONFIG_FE_LATENCY_HIST=y
-
-# M7c bench, temporary (proposed diff B-M7c-08): IDLE0 not watched by the task watchdog. Page
-# serving keeps Core 0 busy for > 2 s and the M7b setting (2 s, panic) reset the board in a loop.
-# IDLE1 (Core 1, the flight task's core) stays watched with panic. The flight build is unchanged.
-CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n

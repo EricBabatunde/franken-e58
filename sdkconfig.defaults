@@ -53,16 +53,19 @@ CONFIG_MCPWM_CTRL_FUNC_IN_IRAM=y
 
 # M7b watchdogs (decisions D1, D1b; blueprint 4.2, 4.8). Interrupt watchdog 100 ms with the CPU1
 # tick watched: covers a Core 1 hang with interrupts masked, which the Core 1 GPTimer watchdog
-# cannot see. Task watchdog 2 s with panic (without it a task watchdog timeout only prints), on
-# both idle tasks. Panics print the backtrace and reboot; the panic wrapper in hal_mcpwm forces the
-# gates low first.
+# cannot see. Task watchdog 2 s with panic (without it a task watchdog timeout only prints),
+# watching IDLE1 (IDLE0 not watched since M7c, below). Panics print the backtrace and reboot; the
+# panic wrapper in hal_mcpwm forces the gates low first.
 CONFIG_ESP_INT_WDT=y
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=100
 CONFIG_ESP_INT_WDT_CHECK_CPU1=y
 CONFIG_ESP_TASK_WDT_INIT=y
 CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=2
-CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+# IDLE0 not watched (M7c, B-M7c-08): page serving keeps Core 0 busy for more than 2 s with nothing
+# wrong, and a panic reset is itself a hazard in flight. Core 0 starvation of the flight path is
+# covered by the 150 ms link-loss cut on Core 1. IDLE1 (the flight core) stays watched with panic.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=y
 CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
 # GPTimer default ISR in IRAM (the IDF default, set explicitly for the watchdog)
@@ -71,5 +74,9 @@ CONFIG_GPTIMER_ISR_HANDLER_IN_IRAM=y
 # is disabled (M7b: up to 902 us late while DISARMED without it). The callback and all it touches
 # must be in IRAM/DRAM. Verify against IDF docs (gptimer Kconfig, 5.5.3).
 CONFIG_GPTIMER_ISR_CACHE_SAFE=y
+# IMU I2C transfer path in IRAM (M7c R5 result (b), B-M7c-11): the IDF i2c_master object, hal_i2c and
+# drv_mpu6500 through components/hal_i2c/linker.lf. Burst average under page serving 620 -> 479 us,
+# worst frame 783 -> 553 us; +7.4 KB internal RAM.
+CONFIG_FE_R5_I2C_IRAM=y
 # FreeRTOS timer service task ("Tmr Svc") pinned to Core 0: unpinned it may run on Core 1 (M7b)
 CONFIG_FREERTOS_TIMER_TASK_AFFINITY_CPU0=y

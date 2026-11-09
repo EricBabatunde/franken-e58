@@ -12,6 +12,10 @@ against its deadline is recorded as the sender's own scheduling jitter.
 If the WebSocket drops (device reset, brownout, out of range), sending stops, the run is
 summarised over the pings actually sent, and RESULT is FAIL with the reason.
 
+Loss above 0.5 % (LOSS_FLAG_PCT, lost or later than 200 ms) is also a FAIL (M7c close-out): the
+percentiles describe only the pongs that came back, so a run that lost most of its pings could
+otherwise print PASS (M7c soak, 99.8 % lost).
+
 Outputs: <out>.csv (every ping), <out>.json (summary), <out>.png (histogram, 0.5 ms bins).
 
 Needs the project venv (tools/requirements-m6.txt):
@@ -217,8 +221,21 @@ def summarise(run, args, transport, target):
     s["pass_p95"] = bool(ow and ow["p95"] < TARGET_P95_MS)
     s["pass_p99"] = bool(ow and ow["p99"] < TARGET_P99_MS)
     s["loss_flag"] = s["loss_pct"] > LOSS_FLAG_PCT
-    s["result"] = "PASS" if (s["pass_p95"] and s["pass_p99"] and run.bad_rx == 0 and run.echo_errors == 0
-                             and not run.link_lost) else "FAIL"
+    reasons = []
+    if not s["pass_p95"]:
+        reasons.append("p95")
+    if not s["pass_p99"]:
+        reasons.append("p99")
+    if s["loss_flag"]:
+        reasons.append(f"loss {s['loss_pct']:.2f} % > {LOSS_FLAG_PCT} %")
+    if run.bad_rx:
+        reasons.append("invalid frames")
+    if run.echo_errors:
+        reasons.append("echo errors")
+    if run.link_lost:
+        reasons.append("link lost")
+    s["fail_reasons"] = reasons
+    s["result"] = "FAIL" if reasons else "PASS"
     return s, one_way_ms
 
 
@@ -289,7 +306,7 @@ def print_summary(s, prefix):
         print(f"LINK LOST: {s['link_lost']} (planned {s['planned']}; figures cover the pings sent)")
     if prefix:
         print(f"files: {prefix}.csv, .json, .png")
-    print(f"RESULT: {s['result']}")
+    print(f"RESULT: {s['result']}" + (f" ({', '.join(s['fail_reasons'])})" if s["fail_reasons"] else ""))
     print("===== end =====")
 
 
@@ -427,6 +444,17 @@ async def selftest(args):
         s, _ = summarise(run, drop_args, "ws", target)
         check(run.link_lost and run.n_sent < 60 and s["result"] == "FAIL" and not errors,
               f"WebSocket: dropped link stops the run ({run.n_sent} of 200 sent, {len(errors)} stray task errors)")
+        # Heavy loss with good percentiles (M7c soak: 99.8 % lost, the 0.2 % answered were fast): FAIL.
+        lossy = Run(100)
+        lossy.n_sent = 100
+        for i in range(100):
+            lossy.sent(i, i * 20_000_000, i * 20_000_000)
+            if i % 10 < 4:  # 40 % answered in 2 ms, 60 % lost
+                lossy.t_recv[i] = lossy.t_send[i] + 2_000_000
+                lossy.turnaround[i] = 100
+        s, _ = summarise(lossy, drop_args, "ws", "synthetic")
+        check(s["loss_flag"] and s["pass_p95"] and s["pass_p99"] and s["result"] == "FAIL"
+              and any("loss" in r for r in s["fail_reasons"]), "loss > 0.5 % with good percentiles: FAIL")
     finally:
         udp_t.close()
         server.close()

@@ -3,7 +3,7 @@
 Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is ground-up ESP-IDF 5.x (PlatformIO, official `espressif32` platform, `framework = espidf`, no Arduino). The binding spec is `docs/Franken-E58_Full_System_Architecture_Blueprint.md`. Read the sections relevant to the current module before starting. Do not load the whole file unless it is needed.
 
 ## Status
-- Phase 1 (breadboard, props off, no motors). Current module: M7c, see `docs/M7c_package.md` (M7b closed 7 November 2026, `docs/M7b_package.md`). No motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment; the R5 experiment builds are `esp32s3_r5b` to `esp32s3_r5e`.
+- Phase 1 (breadboard, props off, no motors). M7c passed and closed 9 November 2026 (`docs/M7c_package.md`; M7b: `docs/M7b_package.md`). Next module: spec pending; do not start it until the spec is given. No motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment.
 - Work on ONE module at a time. Never add features from later modules.
 
 ## Commands
@@ -23,6 +23,7 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 - Platform pinned to `espressif32 @ 6.13.0` (ESP-IDF 5.5.3).
 - Use split component names (`esp_driver_gpio`, `esp_driver_i2c`, `esp_driver_mcpwm`, `esp_driver_gptimer`, `esp_adc`), never the legacy `driver` catch-all.
 - Flash mode is DIO.
+- The IMU I2C transfer path runs from IRAM (`CONFIG_FE_R5_I2C_IRAM=y`, M7c R5 (b)). Task watchdog watches IDLE1 only (IDLE0 not watched since M7c).
 - I2C bus recovery is `i2c_master_bus_reset()` plus IMU init in the flight task, SAFE or DISARMED only, 3 attempts, then at most 2 controlled restarts per power-on, then BOOT (M7b). Never while armed, and never a bus tear-down and rebuild. Flight code relies on the GPTimer watchdog's IMU-missing cut.
 
 ## Code rules

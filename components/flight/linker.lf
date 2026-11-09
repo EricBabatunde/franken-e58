@@ -1,6 +1,6 @@
 # The flight task is the Core 1 control path: code in IRAM, read-only data in DRAM
-# (CLAUDE.md: control paths in IRAM; blueprint R5 candidate fix). The IDF I2C master transfer
-# code it calls stays in flash.
+# (CLAUDE.md: control paths in IRAM; blueprint R5). The IDF I2C master transfer code it calls is
+# placed in IRAM by components/hal_i2c/linker.lf (CONFIG_FE_R5_I2C_IRAM, M7c).
 [mapping:flight]
 archive: libflight.a
 entries:

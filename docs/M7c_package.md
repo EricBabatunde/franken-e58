@@ -1,6 +1,6 @@
 # Module 7c package: timing under load, R5 experiments and soak
 
-**Status:** bench complete (9 November 2026): acceptance 1, 7, 8, 9, 12 and 13 pass (§8d). Decisions pending: the R5 default, B-M7c-08, the blueprint diffs. Implemented and built 7 November 2026. All six environments build with 0 warnings, the config check passes for each, and the five host tests pass (§8). Bench run pending. Blueprint diffs B-M7c-01 to 07 are proposed, not applied (§6).
+**Status:** **passed and closed 9 November 2026.** Acceptance 1, 7, 8, 9, 12 and 13 pass (§8d). Blueprint diffs B-M7c-01 to 06 and 08 to 11 are applied in blueprint revision 2.12; B-M7c-07 is not, because (d) was not chosen. Close-out changes: §8e.
 
 M7c is the second half of the M7 spec (`docs/M7b_package.md` §1.1, approved split): acceptance 7, 8, 9 and 12, plus 1 and 13 for the new code.
 
@@ -228,7 +228,7 @@ Acceptance 7, 8, 9 and 12, and every timing figure:
 - whether the 1 s publish shows in the wake-up histogram;
 - the (d) schedule on the real IMU (the 6-byte read's duration; GYRO_XOUT_H = 0x43 to be verified against the datasheet).
 
-## 6. Proposed blueprint diffs (not applied)
+## 6. Blueprint diffs (applied in revision 2.12, 9 November 2026, except B-M7c-07)
 | ID | Section | Old | New | Reason |
 |---|---|---|---|---|
 | B-M7c-01 | §4.3 timing budget | "Filters, attitude, PID, mixer < 150 µs, to be measured"; margin ≥ 350 µs | The M7c measurements: loop work p99.9 and max with the 150 µs synthetic load under page serving; margin stated from the max | Acceptance 8 (pending bench) |
@@ -237,7 +237,7 @@ Acceptance 7, 8, 9 and 12, and every timing figure:
 | B-M7c-04 | §6.2 R5 | Candidate fixes in M7 | The R5 table (a) to (e) with the burst average and the loop-work p99.9 and max, the IRAM and RAM cost of each, and the recommendation | Acceptance 9 (pending bench) |
 | B-M7c-05 | §5 Phase 1, M7c row | "Loop jitter p99.9 < 100 µs" | Loop jitter defined as \|wake-to-wake − 1000 µs\| over consecutive data wake-ups, 1 µs bins; per condition (idle, UDP, WebSocket, page serving), load off; and with the 150 µs load under page serving | D2 spec issue |
 | B-M7c-06 | §4.10 | Repository layout | Add `components/latency/` (header-only histograms), `src/m7c_timing.cpp`, `tools/run_m7b.py`, `tools/analyse_m7b.py` | Layout |
-| B-M7c-07 | §4.4 signal chain (conditional) | Accelerometer read at 1 kHz in the 14-byte burst | Only if (d) is recommended and approved: the 6-byte gyro read at 1 kHz and the 14-byte burst every 4th frame (accelerometer 250 Hz, same-sample gyro) | Acceptance 9 |
+| B-M7c-07 (not applied: (d) not chosen) | §4.4 signal chain (conditional) | Accelerometer read at 1 kHz in the 14-byte burst | Only if (d) is recommended and approved: the 6-byte gyro read at 1 kHz and the 14-byte burst every 4th frame (accelerometer 250 Hz, same-sample gyro) | Acceptance 9 |
 | B-M7c-08 | §4.8 other layers (B-M7b-04) | Task watchdog 2 s with panic, watching IDLE0 and IDLE1 | Bench builds, temporary: IDLE0 not watched (`sdkconfig.defaults.bench`); IDLE1 watched with panic. Flight build unchanged until decided | Page serving starved IDLE0 for > 2 s: 23 `TASK_WDT` resets in a loop (7 November 2026, 13:21 and 13:59 logs). Open: plain Core 0 load, or a Core 0 hang (the first trip's backtrace was in a spinlock acquire; see the LittleFS crash in §8b) |
 | B-M7c-09 | §4.6 communications, R3 | WebSocket and the static pages share one `esp_http_server` task | Recorded limitation: under continuous page serving (20 requests/s) the WebSocket replies queue behind the page sends. In the soak the device read 56 903 pings but the laptop got only 101 replies in time; the rest arrived later than 200 ms or not at all. Proposal (later module): no page serving while ARMED, or a second server instance for `/ws` | Soak, 9 November 2026 |
 | B-M7c-10 | §4.2 rule 2 | — | The Wi-Fi PHY calibration, at about 0.79 s after start, holds off the Core 1 watchdog interrupt for 513–615 µs once per boot. The board is still in BOOT or SAFE then, never ARMED; no change | D5 |
@@ -367,6 +367,22 @@ Analyser over every valid M7c log: `135922`, `154912`, `161107`, `170547`, `2322
 - **WebSocket under page load:** B-M7c-09.
 - **Boot-time watchdog delay:** B-M7c-10.
 - **`latency_test.py` printed `RESULT: PASS` at 99.8 % loss:** its result ignores the loss flag. A tool fix is proposed.
+
+## 8e. Close-out changes (9 November 2026, approved)
+- **R5 (b) is the default for every build:** `CONFIG_FE_R5_I2C_IRAM=y` in `sdkconfig.defaults` (B-M7c-11).
+  - Flight build: `i2c_master_transmit_receive` and the transaction functions are now in IRAM (0x4037…).
+  - Internal RAM +7.7 KB: `_heap_start` moved from 0x3FCAB318 to 0x3FCAD118.
+  - The Kconfig help text, the comments in both linker fragments and `sdkconfig.defaults.r5b` say so. The r5b overlay now changes nothing.
+  - **The bench build is now (b).** Its `M7C:` line reports R5 config `b`, and the analyser's acceptance 7 and 8 checks, which look for config `a`, apply to the M7c record only.
+- **IDLE0 not watched in every build:** `CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n` moved from the bench overlay to `sdkconfig.defaults` (B-M7c-08). IDLE1 stays watched with panic, so the M7b `T` test is unaffected.
+- **`tools/latency_test.py`:** loss above 0.5 % (lost, or later than 200 ms) is now a FAIL, and `RESULT` names the reasons. A new self-test case (40 % answered, fast) checks it. Self-test 14/14.
+- **`tools/analyse_m7b.py`:** the soak heap rule judges the drift from start to end; the minimum is reported, not judged.
+- **Checks:**
+  - all eight environments rebuilt from regenerated configs, 0 warnings;
+  - `verify_sdkconfig.sh`: `esp32s3` 39/39, `esp32s3_bench` 41/41, r5b 41/41, r5c, r5d and r5e 42/42 each, the two heapdiag builds 43/43 each;
+  - host tests: safety 7 455 485 checks, output gate 566 535, seqlock PASS, control frame 4043, latency histogram 7211, all 0 failed;
+  - Core 1 libraries on the flight build: no log, printf, heap, guard or atomic calls (only `abort`, key `X`).
+- **Not re-run on hardware after these changes:** the flight build has not been flashed with (b) and the IDLE0 change together. The bench runs used them separately: (b) in `esp32s3_r5b`, IDLE0 in `esp32s3_bench`.
 
 ## 9. Files
 ```

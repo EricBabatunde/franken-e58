@@ -1,3 +1,4 @@
-# R5 experiment (b), M7c bench only, applied after sdkconfig.defaults and sdkconfig.defaults.bench:
-# the IMU I2C transfer path in IRAM (components/hal_i2c/linker.lf).
+# R5 experiment (b), M7c: the IMU I2C transfer path in IRAM (components/hal_i2c/linker.lf).
+# Since the M7c close-out (9 November 2026) this is the default in sdkconfig.defaults, so this
+# overlay changes nothing; kept so the esp32s3_r5b environment still builds as recorded.
 CONFIG_FE_R5_I2C_IRAM=y
