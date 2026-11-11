@@ -13,3 +13,13 @@ components/comms/include/wifi_credentials.h
 managed_components/
 data/
 __pycache__/
+
+# Phase 2 PCB (large binaries and tool caches stay local; STEP and DXF are tracked)
+pcb/datasheets/*.pdf
+pcb/outputs/*.zip
+pcb/kicad/**/*-backups/
+pcb/kicad/**/.mcp-backups/
+pcb/kicad/**/fp-info-cache
+pcb/mechanical/*.sldprt
+*.sldasm
+pcb/tools/.venv/

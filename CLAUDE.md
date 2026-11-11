@@ -3,7 +3,7 @@
 Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is ground-up ESP-IDF 5.x (PlatformIO, official `espressif32` platform, `framework = espidf`, no Arduino). The binding spec is `docs/Franken-E58_Full_System_Architecture_Blueprint.md`. Read the sections relevant to the current module before starting. Do not load the whole file unless it is needed.
 
 ## Status
-- Phase 1 complete (9 November 2026; `docs/PHASE1_REPORT.md`, blueprint revision 2.14). Next: Phase 2 (schematic capture and PCB design), spec pending; do not start it until the spec is given. Until hardware changes: no motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment (`FE_P1_INTEGRATION`).
+- Phase 1 complete (9 November 2026; `docs/PHASE1_REPORT.md`). **Phase 2 in progress** (blueprint revision 2.15): P2-0 toolchain passed 11 November 2026 (`docs/P2-0_package.md`); **P2-1 mechanical capture in progress** (`docs/P2-1_package.md`). Work from the current stage package only. Until hardware changes: no motors, MOSFET stage or shield may be connected; 10 kOhm pull-downs on GPIO 4 to 7 only. The bench firmware is the `esp32s3_bench` environment (`FE_P1_INTEGRATION`).
 - Work on ONE module at a time. Never add features from later modules.
 
 ## Commands
@@ -39,6 +39,18 @@ Closed-loop micro-quadcopter: ESP32-S3-N16R8 on a Mavic E58 frame. Firmware is g
 ## Safety
 - Props are off for all bring-up. Never write code that enables motor output without the arming state machine and the 150 ms link-loss cutoff.
 - Emergency cut: duty to zero and MCPWM generators forced low, latched, no automatic re-arm.
+
+## PCB work (Phase 2)
+- Everything for the board lives in `pcb/` (layout in `pcb/README.md`). Stage packages are `docs/P2-n_package.md`. Phase 2 decisions and the pending blueprint diffs are in `docs/Phase2_blueprint_blocks.md` (Block 7 is the diff table); a diff moves into the blueprint only when it is accepted at a stage gate, never silently.
+- The firmware tree is not touched in Phase 2: `src/`, `components/`, `tools/`, `web/`, `data/`, `platformio.ini` and the sdkconfig files stay as they are.
+- **Datasheet first.** No symbol, footprint or net is created from memory. The source (file and page) is recorded in `pcb/datasheets/MANIFEST.md`. Footprints are checked against the manufacturer land-pattern drawing, not only against the KiCad library.
+- **Every number carries a tag:** `[measured]`, `[datasheet p.N]` or `[assumed]`. Assumed values are listed in the stage report.
+- **Independent verification.** Netlist and pin checks run in a script that does not share code with whatever generated the schematic. ERC and DRC are run through both the MCP server and `kicad-cli`.
+- **Power nets use global power symbols**, never sheet-local labels (the P2-0 test board produced `/GND` against `GND` mismatches).
+- **Git discipline.** Commit before every gate and before any bulk MCP edit. The user runs the commits. The KiCad GUI is never open on the same file as the MCP server edits.
+- **No autorouting** for the motor and IMU areas.
+- **No guessing.** A missing measurement is asked for, not estimated.
+- `kicad` MCP server: board edits one at a time, never in parallel. A save refused as "changed externally" is retried with force only when nothing else has the file open. Python for PCB tools runs in `pcb/tools/.venv`, never system-wide; the shell's default `python3` is PlatformIO's.
 
 ## Working style
 - For anything touching more than one file, show a plan first and wait for approval.
