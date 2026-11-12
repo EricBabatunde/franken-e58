@@ -7,12 +7,12 @@ B1,Mounting hole 1 (nose end; aircraft-left x=0 side),1.35,43.7,1.5,0.3,measured
 B2,Mounting hole 2 (nose end; aircraft-right side),21.65,43.7,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,cross pitch to B1 = 20.3 (ruler 21 superseded: inconsistent with width 23 and the 18.8 gap)
 B3,Mounting hole 3 (aircraft-left side),1.35,33.0,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,pitch to B1 = 10.7 (ruler)
 B4,Mounting hole 4 (aircraft-right side),21.65,33.0,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,
-B5,Cut-out A circular (aircraft-left edge),2.5,16.0,5.8,0.5,measured: ruler y and mouth 4.3; photo diameter 2026-11-12,size = diameter; centre about 2.5 mm inside the edge x=0; mouth 4.3 at the edge
-B6,Cut-out B circular (aircraft-right edge),20.5,16.0,5.8,0.5,measured: ruler y and mouth 4.3; photo diameter 2026-11-12,size = diameter; centre about 2.5 mm inside the edge x=23; mouth 4.3
+B5,Cut-out A circular (aircraft-left edge),2.0,16.0,5.8,0.5,measured: ruler y and mouth 4.3; photo diameter 2026-11-12,size = diameter; centre 2.0 inside the edge x=0 derived from mouth 4.3 and dia 5.8 (photo 2.5 superseded: gives a 2.9 mouth)
+B6,Cut-out B circular (aircraft-right edge),21.0,16.0,5.8,0.5,measured: ruler y and mouth 4.3; photo diameter 2026-11-12,size = diameter; centre 2.0 inside the edge x=23; mouth 4.3
 B7,Screw post outer diameter (4 posts on the frame),,,3.0,0.5,measured: ruler 2026-11-12,screws enter from above
 B8,OEM screw (head 2.3; length >4; passes a 1.5 hole freely),,,2.3,0.3,measured: ruler 2026-11-12; thread assumed M1.4 class,verify thread; new board drill chosen in P2-4 from the screw
-B9,Cut-out peg A (frame; through cut-out A),2.5,16.0,4.0,1.0,measured: photo 2026-11-12,round peg with cross top; from the slotted floor
-B10,Cut-out peg B (frame; through cut-out B),20.5,16.0,4.0,1.0,measured: photo 2026-11-12,pegs 18 mm apart
+B9,Cut-out peg A (frame; through cut-out A),2.0,16.0,4.0,0.5,measured: ruler spacing 19 + photo 2026-11-12,round peg with four fins; concentric with cut-out A; fins 7 across at the floor tapering to 4 at board level (M6)
+B10,Cut-out peg B (frame; through cut-out B),21.0,16.0,4.0,0.5,measured: ruler spacing 19 + photo 2026-11-12,pegs 19 mm apart centre to centre (ruler; confirms the cut-out correction)
 C1,Cavity width wall to wall at board level,26,,,1.0,measured: ruler 2026-11-12,about 1.5 mm each side of the 23 mm board
 C2,Camera-compartment front wall (nose),,56.5,,1.0,measured: ruler 2026-11-12,10 mm beyond the board nose edge
 C3,End of slotted floor (tail),,-21,,1.0,measured: ruler 2026-11-12,frame screw posts at y=-15
@@ -20,7 +20,7 @@ C4,Screw post height (camera floor to board seat),,,18,0.5,measured: ruler 2026-
 C5,Peg height from slotted floor,,,7,0.5,measured: ruler 2026-11-12,fin shoulder at 3.5 carries the board
 C6,Gap board underside to slotted floor (tail half),,,3.5,0.5,measured: ruler 2026-11-12,bottom parts on the tail half under 3 mm
 C7,Peg protrusion above board top,,,2,0.5,measured: ruler 2026-11-12,derived 2.5
-C8,Canopy height above board top at the button,,,14,1.0,measured: ruler 2026-11-12,14 mm plunger in the canopy presses the 8 mm button
+C8,Canopy plunger over the power button (length from the canopy underside down to the button top),11,38,14,1.0,measured: ruler 2026-11-12,canopy underside is 22 above the board top here too (M2); 22 - 8 mm button = 14 mm plunger; earlier reading of 14 as canopy height superseded
 C9,Canopy height above board top at mid-board,,,22,1.0,measured: ruler 2026-11-12,
 C10,Canopy height above board top at the antenna end,,,26,1.0,measured: ruler 2026-11-12,
 D1,Battery header (bottom side; 3 pins along x; pitch 2.0),15,32,2.0,0.5,measured: ruler 2026-11-12,B+ at x=0 side; B- at x=23 side; middle NC; centre pin; photo value (14 31) replaced by ruler
@@ -40,3 +40,13 @@ I1,Propeller diameter,,,107,1.0,measured: ruler 2026-11-12,
 I2,Diagonal motor shaft distance (arms unfolded),,,200,2.0,measured: ruler 2026-11-12,front-left to rear-right
 I3,Total flying mass budget (g),,,98,,assumed,85 g class figures plus 15 % factor; no scale; verify before P2-9
 I4,New board mass budget (g),,,6,,assumed,no heavier than the OEM board
+C11,Step between the slotted floor and the camera well (nose edge of the slotted floor),,,,,measured: ruler 2026-11-12 (reference point unresolved),user read 13 mm; cannot be from the tail edge (pegs at y=16 rise from the slotted floor); if from the pegs the step is at y=29; to confirm
+C12,Canopy height above board top at the nose edge and over the camera compartment,,46.5,22,1.0,measured: ruler 2026-11-12,same as mid-board; canopy underside is 22 from y=23 to the front wall; 26 at the tail
+C13,Canopy profile across the width,,,0,,measured: ruler 2026-11-12,flat: same clearance at the long edges as on the centre line
+C14,Cavity side wall height above the board seat,,,4.5,0.5,measured: ruler 2026-11-12,canopy sits on the walls; the USB-C opening will run through the wall top into the canopy lip
+C15,Gap camera adapter assembly top to OEM board underside,,,11,1.0,measured: ruler 2026-11-12,adapter assembly stands 7 above the camera floor (18 - 11); free depth under the nose half 11
+C16,Peg fin span at the slotted floor / at board level,,,7 / 4,0.5,measured: ruler 2026-11-12,fins taper from 7 across at the floor to 4 at the seat; bottom-side ring around each cut-out clears a 7 mm cone
+C17,Slotted floor thickness,,,1.0,0.5,measured: ruler 2026-11-12,same as the frame wall
+C18,Motor lead entries: slots in the side walls,0 and 23,20.5 and 28.5,,,measured: visual 2026-11-12,leads enter through wall slots from the side at the connector positions; slot width and depth to measure with M9
+C19,Small posts inside the cavity (other than the 4 screw posts and 2 pegs),,,,,measured: visual 2026-11-12,exist; positions and sizes to be measured and added before the cavity model is final
+E5,Motor connector height above the board top,,,5,0.5,measured: ruler 2026-11-12,applies to the edge connectors; used for the reference plate blocks
