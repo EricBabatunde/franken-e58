@@ -1,1 +1,42 @@
 id,item,x_mm,y_mm,size_mm,tolerance_mm,tag,note
+A1,OEM board length (along y nose-tail),,46.5,,0.5,measured: ruler 2026-11-12,longer side runs nose to tail; datum at lower-left corner seen from top
+A2,OEM board width (along x),23,,,0.5,measured: ruler 2026-11-12 (re-measured),photo values 23.5-24.1 rejected: board tilts on the paper
+A3,OEM board thickness,,,1.0,0.2,measured: ruler 2026-11-12,nearest standard FR-4 thickness
+A4,Corner radius,,,0,,measured: visual 2026-11-12,square corners
+B1,Mounting hole 1 (nose end; aircraft-left x=0 side),1.35,43.7,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,OEM screw passes freely; inner gap 18.8 + hole 1.5 = pitch 20.3; x = (23-20.3)/2; rim 0.6; photo centres 1.15 to 1.3
+B2,Mounting hole 2 (nose end; aircraft-right side),21.65,43.7,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,cross pitch to B1 = 20.3 (ruler 21 superseded: inconsistent with width 23 and the 18.8 gap)
+B3,Mounting hole 3 (aircraft-left side),1.35,33.0,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,pitch to B1 = 10.7 (ruler)
+B4,Mounting hole 4 (aircraft-right side),21.65,33.0,1.5,0.3,measured: ruler gap and hole + photo 2026-11-12,
+B5,Cut-out A circular (aircraft-left edge),2.5,16.0,5.8,0.5,measured: ruler y and mouth 4.3; photo diameter 2026-11-12,size = diameter; centre about 2.5 mm inside the edge x=0; mouth 4.3 at the edge
+B6,Cut-out B circular (aircraft-right edge),20.5,16.0,5.8,0.5,measured: ruler y and mouth 4.3; photo diameter 2026-11-12,size = diameter; centre about 2.5 mm inside the edge x=23; mouth 4.3
+B7,Screw post outer diameter (4 posts on the frame),,,3.0,0.5,measured: ruler 2026-11-12,screws enter from above
+B8,OEM screw (head 2.3; length >4; passes a 1.5 hole freely),,,2.3,0.3,measured: ruler 2026-11-12; thread assumed M1.4 class,verify thread; new board drill chosen in P2-4 from the screw
+B9,Cut-out peg A (frame; through cut-out A),2.5,16.0,4.0,1.0,measured: photo 2026-11-12,round peg with cross top; from the slotted floor
+B10,Cut-out peg B (frame; through cut-out B),20.5,16.0,4.0,1.0,measured: photo 2026-11-12,pegs 18 mm apart
+C1,Cavity width wall to wall at board level,26,,,1.0,measured: ruler 2026-11-12,about 1.5 mm each side of the 23 mm board
+C2,Camera-compartment front wall (nose),,56.5,,1.0,measured: ruler 2026-11-12,10 mm beyond the board nose edge
+C3,End of slotted floor (tail),,-21,,1.0,measured: ruler 2026-11-12,frame screw posts at y=-15
+C4,Screw post height (camera floor to board seat),,,18,0.5,measured: ruler 2026-11-12,depth available under the nose half
+C5,Peg height from slotted floor,,,7,0.5,measured: ruler 2026-11-12,fin shoulder at 3.5 carries the board
+C6,Gap board underside to slotted floor (tail half),,,3.5,0.5,measured: ruler 2026-11-12,bottom parts on the tail half under 3 mm
+C7,Peg protrusion above board top,,,2,0.5,measured: ruler 2026-11-12,derived 2.5
+C8,Canopy height above board top at the button,,,14,1.0,measured: ruler 2026-11-12,14 mm plunger in the canopy presses the 8 mm button
+C9,Canopy height above board top at mid-board,,,22,1.0,measured: ruler 2026-11-12,
+C10,Canopy height above board top at the antenna end,,,26,1.0,measured: ruler 2026-11-12,
+D1,Battery header (bottom side; 3 pins along x; pitch 2.0),15,32,2.0,0.5,measured: ruler 2026-11-12,B+ at x=0 side; B- at x=23 side; middle NC; centre pin; photo value (14 31) replaced by ruler
+D2,Battery pack cased body (L x W x H),,,58x23x10,0.5,measured: ruler 2026-11-12,excludes pull tab; enters from the tail under the slotted floor
+E1,Motor connector left-rear (x=0 edge),0,20.5,,1.0,measured: photo 2026-11-12,2-pin horizontal entry facing outward
+E2,Motor connector left-front (x=0 edge),0,28.5,,1.0,measured: photo 2026-11-12,
+E3,Motor connector right-rear (x=23 edge),23,20.5,,1.0,measured: photo 2026-11-12,
+E4,Motor connector right-front (x=23 edge),23,28.5,,1.0,measured: photo 2026-11-12,
+F1,Camera adapter 3-pin connector on the main board (V+ GND RX),,44,,1.0,measured: photo + continuity 2026-11-12,position x to be read from photo; nose end next to the button
+F2,LED 2-pin connector (V+ and L-),23,42,,1.0,measured: photo 2026-11-12,nose end on the right edge; two white LEDs at the nose
+H1,Power button (6x6 tactile; 8 mm tall; pressed by the 14 mm canopy plunger),11,38,6.0,0.5,measured: ruler 2026-11-12,position fixed by the canopy plunger if the OEM canopy is kept
+H2,OEM status LED (visible through the canopy),11.5,17,,0.5,measured: ruler 2026-11-12,new board status LED near this spot
+H3,OEM antenna wire exit (tail edge corner; 30 mm wire),1,0,,0.5,measured: ruler 2026-11-12,not needed on the new board; corner free
+H4,USB-C receptacle zone (aircraft-left edge x=0; centre y 3 to 13; flush with edge),0,8,,5.0,measured: ruler 2026-11-12 (zone),D-P2-03 go; frame side wall slot about 7x13 mm cut in P2-9; exact y and part in P2-3
+H5,Frame side wall at the USB-C zone (thickness; 1.5 mm from board edge),,,1.25,0.25,measured: ruler 2026-11-12,solid; reachable from outside; no latch or wire channel behind it
+I1,Propeller diameter,,,107,1.0,measured: ruler 2026-11-12,
+I2,Diagonal motor shaft distance (arms unfolded),,,200,2.0,measured: ruler 2026-11-12,front-left to rear-right
+I3,Total flying mass budget (g),,,98,,assumed,85 g class figures plus 15 % factor; no scale; verify before P2-9
+I4,New board mass budget (g),,,6,,assumed,no heavier than the OEM board

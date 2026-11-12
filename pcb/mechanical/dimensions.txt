@@ -1,0 +1,12 @@
+length of the board = about 46.5mm
+width of the board = 23mm
+thickness of the board = 1.0mm
+
+the ruler's precision is 1mm. the board seems to be in between 46 and 47mm hence 46.5mm
+
+the corner shape is square with sharp edges.
+there are 2 large mounting notches, then 4 separate screw holes. 
+the 2 mounting notches are on the lower half of the board, and the screw holes on the upper half of the board
+there doesn't seem to be any major copper free zone or component free zone.
+i don't have a scale, so weight is assumed. we will have to add a factor of safety to the assumed weight
+I'm choosing the length of the board as the longer side.

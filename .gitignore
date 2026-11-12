@@ -23,3 +23,4 @@ pcb/kicad/**/fp-info-cache
 pcb/mechanical/*.sldprt
 *.sldasm
 pcb/tools/.venv/
+pcb/photos/
