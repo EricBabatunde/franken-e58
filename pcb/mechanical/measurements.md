@@ -211,6 +211,16 @@ The wall is about 6 mm from the board edge at the USB-C zone (left edge, y = 3 t
 
 The user proposes cutting a hole in the frame floor to align and mount the VL53L1X looking down. Not decided in P2-1. Open points for P2-2: where on the floor (the tail half is the battery bay; the nose-half well holds the camera adapter and bottom camera; the free floor ahead of the board depends on the unresolved front-wall position); the field of view and cover-window requirements from the VL53L1X datasheet; and the cable length from the board to a floor-mounted breakout (D-P2-06 already proposes a breakout on a connector).
 
+### Printout in the frame (gate item 6), 2026-11-20
+
+| Item | Value | Tag | Note |
+|---|---|---|---|
+| Fixing | Printout screwed to the four posts; rests on the post tops and the peg fin shoulders; nothing else latches it | [measured: user, video `pcb/photos/MAH00217.MP4`, 2026-11-20] | Matches C20 |
+| Wall gap per side at the nose (y ≈ 47) | about 1.3 | [measured: user, 2026-11-20] | Model 1.3 |
+| Wall gap per side at the U-slots (y ≈ 16) | about 5 | [measured: user, 2026-11-20] | Model 4.5 |
+| Tail edge (y = 0) | Lies flat on the seat; no rib or lip under it | [measured: user, 2026-11-20] | The paper curl seen in the video was the paper only |
+| Peg to U-slot fit | The pegs touch the paper slot edges; no visible clearance or slack | [measured: user, 2026-11-20] | Model gives about 0.8 radial. User keeps the 4.2 mm slots (B5, B6) and will scrape them if the real board binds. Check: try the bare board on the pegs before fitting any parts |
+
 ## Sign-off
 
 | Item | Value |

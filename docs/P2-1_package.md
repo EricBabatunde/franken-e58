@@ -4,7 +4,7 @@
 
 Blueprint sections used: §2.1, §3.1, §3.2, §4.10, Phase 2 (revision 2.15 blocks), Phase 3 step 2, O1 to O4. Also read `docs/PHASE1_REPORT.md` (Phase 2 inputs) and `docs/Phase2_blueprint_blocks.md`.
 
-**Status: P2-1 not started.** Claude Code updates this line, the results (§8) and the diff states (§7) as the stage proceeds.
+**Status: P2-1 complete, gate passed 2026-11-20** (deviations: one stall reading per motor and no fuse, see §8). Next: P2-2.
 
 **Credentials:** none.
 
@@ -110,34 +110,38 @@ Ask first, before anything else: **do you have digital calipers?** The blueprint
 
 | ID | Section | Old | New | Reason | State |
 |---|---|---|---|---|---|
-| B-P2-01 | §4.10 | No PCB folder | Add `pcb/` | Dedicated Phase 2 folder | Pending |
-| B-P2-02 | §6.1 O2, Phase 3 step 2 | Stall current measured in Phase 3 | Measured in P2-1 on the OEM motors, re-measured in Phase 3 | Sizing of traces and parts | Pending |
-| B-P2-03 | Phase 2 step 1 | No programming or boot circuit | Add EN circuit, BOOT, USB-C, CC resistors, ESD, UART0 pads, test points | Bare module needs them | Pending |
-| B-P2-04 | §3.4 | Dev-board pin list | Module pad column, module reserved GPIOs, USB on GPIO 19 and 20 | Module breaks out fewer pins | Pending |
-| B-P2-05 | §6.1 O1 | Open | Close as not applicable | No dev-board LED on the module | Pending |
-| B-P2-06 | §2.1 | "Camera retained" | Rev A mechanical only | Pending the group F inspection | Pending |
-| B-P2-07 | Phase 2 | "Shield board" | Single flight-controller board | D-P2-01 | Pending |
-| B-P2-08 | Phase 2 step 3 | Fixed 40 to 50 mil | Width calculated from the stall current | Real current | Pending |
-| B-P2-10 | §6.1, §6.2 | O1 to O4, R1 to R8 | Add O5 to O8, R9 to R11 | Phase 2 findings | Pending |
+| B-P2-01 | §4.10 | No PCB folder | Add `pcb/` | Dedicated Phase 2 folder | Applied (revision 2.15, §4.10: `pcb/` in the repository layout) |
+| B-P2-02 | §6.1 O2, Phase 3 step 2 | Stall current measured in Phase 3 | Measured in P2-1 on the OEM motors, re-measured in Phase 3 | Sizing of traces and parts | Applied 2026-11-20: §2.1 Motors row, O2, O8 closed, Phase 3 step 2 (three readings through the fuse on the final board) |
+| B-P2-03 | Phase 2 step 1 | No programming or boot circuit | Add EN circuit, BOOT, USB-C, CC resistors, ESD, UART0 pads, test points | Bare module needs them | Applied (revision 2.15: Phase 2 step 1 and §3.5) |
+| B-P2-04 | §3.4 | Dev-board pin list | Module pad column, module reserved GPIOs, USB on GPIO 19 and 20 | Module breaks out fewer pins | Pending (P2-4): needs the module datasheet pad table (P2-3) |
+| B-P2-05 | §6.1 O1 | Open | Close as not applicable | No dev-board LED on the module | Pending (P2-4, with B-P2-04): O1 stays open in the blueprint until the pin map is re-derived |
+| B-P2-06 | §2.1 | "Camera retained" | Rev A mechanical only | Pending the group F inspection | Applied 2026-11-20: intro, §2.1 Frame row, D-P2-05 Decided, O7 closed (group F inspection) |
+| B-P2-07 | Phase 2 | "Shield board" | Single flight-controller board | D-P2-01 | Applied (revision 2.15: Phase 2 objective) |
+| B-P2-08 | Phase 2 step 3 | Fixed 40 to 50 mil | Width calculated from the stall current | Real current | Applied (revision 2.15: Phase 2 step 3); widths in `pcb/specs/motor_electrical.md` |
+| B-P2-09 | §3.1 | No USB power path | Add the path chosen in P2-2 (Block 4) | D-P2-08 | Pending (P2-2) |
+| B-P2-10 | §6.1, §6.2 | O1 to O4, R1 to R8 | Add O5 to O8, R9 to R11 | Phase 2 findings | Applied (revision 2.15: O5 to O8, R9 to R11) |
 | B-P2-11 | §3.3 (mechanical constraint), D-P2-04 | "Whole board soft-mounted" (D-P2-04); §3.3 asks for the IMU to be soft-mounted | Board screwed rigidly to the four frame posts. The §3.3 IMU soft mount is met another way, chosen in P2-2 (isolated IMU island using the reserved slot or cut-out option, or a separate IMU carrier), with the DLPF and notch filters as the fallback (R1) | User, 2026-11-20: board stability first. The 2.0 mm holes leave a 0.2 mm rim, so grommets cannot fit the OEM hole pattern anyway | Pending (P2-2) |
+| B-P2-12 | §5 Phase 2 D-P2-03, §6.2 R10 | "Mass and height checked in P2-1"; R10 "checked in P2-1" | P2-1 fit check: go. Aircraft-left edge, y = 3 to 13 mm, flush, through a frame wall opening for the whole plug (wall about 6 mm from the board edge); local board widening open for P2-2 | Groups C and H, SOLIDWORKS model | Applied 2026-11-20 |
+| B-P2-13 | §5 Phase 2 D-P2-07 | "Default fab assembly of SMD parts" | Preference recorded: the user hand-solders (passives 0603 or larger, no LGA, QFN only with a hot-air plan); closed in P2-2 | User, P2-1 interview 2026-11-12 | Applied 2026-11-20 |
 
 Claude Code adds rows here as P2-1 uncovers conflicts, for example if the cavity cannot take a USB-C receptacle, the OEM board has features the blocks missed, or the measured stall current exceeds the AO3400A rating.
 
 ## 8. Results
 
-*Filled in by Claude Code at close-out (Prompt 5).*
+Closed out 2026-11-20 (Prompt 5). Gate items from §6 in brackets.
 
 | Check | Result |
 |---|---|
-| Folder, rules, permissions | |
-| Measurements A to I, sign-off | |
-| Camera connector | |
-| Stall current per motor (peak) | |
-| `check_outline.py` | |
-| 1:1 printout fit | |
-| KiCad shell, DRC, 3D | |
-| Mass budget | |
-| USB-C go or no-go | |
+| Folder, rules, permissions (1) | **Pass.** `pcb/` tree, README, decision log, `.gitignore`, CLAUDE.md PCB section and permissions in place. The stray copy `tools/check_outline.py` (committed in `3fc681a`) was removed by the user on 2026-11-20; after that commit, nothing outside `pcb/`, `docs/`, `CLAUDE.md` and `.claude/settings.json` differs from the start of P2-1 |
+| Measurements A to I, sign-off (2) | **Pass.** Signed off 2026-11-12; re-signed 2026-11-20 after the 1:1 printout and the SOLIDWORKS model (`outline.dxf`, `cavity.step`). Every number tagged |
+| Camera connector (3) | **Pass.** 20-pin FPC cameras on the OEM camera adapter (Beken BK7231 SoC); only a 3-wire lead (V+, GND, one-way serial) reaches the flight board. D-P2-05 Decided: mechanical only |
+| Stall current per motor (peak) (4) | **Pass with deviation.** M1 2.92, M2 2.93, M3 2.93, M4 2.95 A (DT9205A 20 A range, flight pack at 3.88 V). Highest 2.95 A; design value 3.5 A. Running with the prop on: 1.45 to 1.57 A, 6.0 A for all four. Trace widths at a 10 °C rise on 1 oz copper: 1.34 mm (2.95 A), 1.69 mm (3.5 A). **Deviation:** one reading per motor, not three; no fuse; repeats in Phase 3 step 2. `pcb/specs/motor_electrical.md` |
+| `check_outline.py` (5) | **Pass** on `outline.dxf` (board 23.5 × 47.0, holes B1 to B4 within 0.1 mm) and on the Edge.Cuts DXF exported back out of KiCad (`pcb/outputs/p2-1_edge_cuts.dxf`) |
+| 1:1 printout fit (6) | **Pass.** Printout screwed to the four posts and resting on the peg fins (video `pcb/photos/MAH00217.MP4`). Wall gap 1.3 mm at the nose and about 5 mm at the U-slots [measured: user, 2026-11-20], against 1.3 and 4.5 in the model. The tail edge lies flat on the seat with no rib or lip. Nothing latches the board. The pegs touch the paper slot edges with no visible clearance (model: about 0.8 mm radial). The user keeps the 4.2 mm slots and will scrape them if the real board binds |
+| KiCad shell, DRC, 3D (7) | **Pass.** `pcb/kicad/franken-e58/`: outline (10 lines, 2 arcs), four 2.0 mm NPTH holes, 11 keep-out rule areas (K1 to K3), height notes, board 1.0 mm. DRC: 0 errors in both the MCP server and `kicad-cli`, 4 accepted `lib_footprint_mismatch` warnings (MCP-generated hole footprint). Renders: `pcb/outputs/p2-1_top.png`, `p2-1_3d.png`, `p2-1_keepouts.png`. Outline, holes and 3D view checked by the user in KiCad, 2026-11-20 |
+| Mass budget (8) | **Pass (all values assumed).** 85 g flying mass, 98 g with a 15 % factor; new board at most 6 g. No scale available: weigh before P2-9 |
+| USB-C go or no-go (8) | **Go.** Aircraft-left edge, y = 3 to 13 mm, flush. The frame wall there is about 6 mm out, so the wall opening takes the whole plug overmould. Local board widening is an option for P2-2 (B-P2-12) |
+| Diffs and blueprint (9) | **Pass.** Every row in §7 is Applied or Pending. Blueprint at revision 2.15 with B-P2-02, 06, 12 and 13 applied on 2026-11-20 |
 
 ## 9. Files
 
