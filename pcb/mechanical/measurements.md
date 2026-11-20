@@ -188,7 +188,7 @@ Procedure and safety rules: `docs/P2-1_package.md` §4 step 6. Props off, one mo
 | Board seat | posts | posts end 1.5 below the board; fins carry it | **Board rests on both the post tops and the fin shoulders at z = 0** `[measured: user confirmation, 2026-11-20]`. The model's post tops (and camera floor at −19.5) are a modelling error. The new board is **screwed to the four posts** for stability (decision log; diff B-P2-11 against D-P2-04) |
 | Cut-out pegs B9, B10 | dia 4, 19 apart, at (2.0, 16) / (21.0, 16) | pins dia 2.5 at (2.4, 15.9) / (21.0, 15.9), 18.6 apart; fin shoulders reach about 2.6 from the pin centre at the seat; pins 2.0 above the board top | Model. Radial clearance pin to slot about 0.8. Model detail: the left board peg stops at z = 0 while the other three rise to z = +3 (cosmetic) |
 | Wall gap per side (board edge to wall) | 1.5 everywhere | 1.3 at y = 47; 1.7 at y = 40; 2.1 at y = 33; 2.6 at y = 28.5; 3.75 at y = 20.5; 4.5 at y = 16; **5.4 to 6.3 at y = 0 to 12**; walls 1.0 thick | Model; about 6 at the USB-C zone confirmed by the user |
-| Wall top above the seat | 4.5 | 3.5 | Unresolved; 3.5 used for anything that must pass over the wall |
+| Wall top above the seat | 4.5 | 3.5 | **Resolved P2-2 C2: 4.5** (user, ruler) |
 | Slotted floor top below the seat | 3.5 | 3.05 (1 mm thick) | **3.0**: bottom-side parts on the tail half under 2.5 |
 | Floor step (M1) | 13, reference unresolved | **y = 22.8** | Model. Closes M1 |
 | Slotted floor tail end | y = −21 | y = −22.2 | Not board-critical |
@@ -200,7 +200,7 @@ Procedure and safety rules: `docs/P2-1_package.md` §4 step 6. Props off, one mo
 | Canopy underside above the board top | 26 at y = 0; 22 from y = 23 to the front wall | 16.9 at y = 0; 18.6 at y = 23 to 38; 18.2 at y = 47; flat across | **Model (lower) values** as the top-side height limit |
 | Plunger and power button | (11, 38) | (11.5, 38.3); plunger tip dia 5, touches the 8 mm button at z = 9 | Model |
 | Battery header D1 | centre pin (15, 32) | centre pin (15.25, 31.75); contacts at x = 13.25 / 15.25 / 17.25; housing x 12 to 18.5, y 29.5 to 34, 6.0 deep below the underside | Model (agrees with the ruler within 0.25) |
-| Motor-lead wall slots (M8) | exist | not modelled | Still open |
+| Motor-lead wall slots (M8) | exist | not modelled | **Resolved P2-2 C2: no wall slots**; leads enter through the arm-pivot recesses |
 | Right-edge items E3, E4, F2 | x = 23 | the right edge is now x = 23.5 | Moved with the outline |
 
 ### USB-C (D-P2-03) after the revision
@@ -229,3 +229,17 @@ The user proposes cutting a hole in the frame floor to align and mount the VL53L
 | Date | 2026-11-12 |
 | Basis | Groups A to I complete. Mounting holes B1 to B4 corrected at sign-off (centre 1.35 mm from the long edges, hole 1.5 mm, cross pitch 20.3 mm, from the 18.8 mm inner gap and the 1.5 mm hole; the earlier ruler values 21 and 2 were inconsistent with the 23 mm width). Open deviations: one stall reading per motor, no fuse, repeat deferred to Phase 3. |
 | Revision | 2026-11-20: A1, A2, B1 to B10, C1 to C19 notes, C20 (new), D1, E3, E4, F2, H1, H4, H5 revised from the 1:1 printout, the SOLIDWORKS model and the user's answers (section above). **Re-signed off by Eric, 2026-11-20** |
+
+## P2-2 carry-in items (2026-11-20)
+
+| Item | Answer | Tag | Note |
+|---|---|---|---|
+| C4: does the board bind on the pegs? | The OEM board sits on the pegs and fits: no slack and no daylight, and no binding | [measured: user, OEM board on the pegs, 2026-11-20] | The new outline is the OEM outline (D-P2-09). Routed slot tolerance is ±0.2 mm (±0.1 high precision, `pcb/specs/design_rules.md`), so a slot cut on the low side may bind; the planned fix is scraping (P2-1). B5 and B6 unchanged |
+| C5: masses | Kept as assumed (group I). The user states they match figures found online | [assumed: user, 2026-11-20] | Deadline: weigh before P2-9 if a scale is available. If not, the budget stays assumed into the Phase 4 thrust test, with the 15 % factor |
+| C3: fab | JLCPCB | [user, 2026-11-20] | Figures and the hole check in `pcb/specs/design_rules.md` |
+| C1: front clearance | 10 mm free ahead of the board's nose edge (y = 47 to 57); the canopy-support posts stand at 11 mm (y = 58) | [measured: user, ruler, 2026-11-20] | The ruler value is confirmed and the model's y = 77 is rejected: the user did not model that region (camera area and canopy posts). `constraints.csv` C2 updated. The keep-outs in the KiCad shell are unchanged until P2-7 |
+| Board size policy | The new board need not stay inside the OEM outline. Space exists behind the tail edge (datum side, y < 0), over the rest of the slotted floor, if it is needed | [user, 2026-11-20] | Not a decision: the outline stays `outline.dxf` (D-P2-09) unless a P2-2 decision needs more area. The usable extent is bounded by C3 (frame screw posts at y = −15, slotted floor end at y = −21, ruler 2026-11-12); measure it only if the extension is chosen |
+| C2: wall top | 4.5 mm above the board seat (measured from the post tops and fin shoulders), so 3.5 above the board top | [measured: user, ruler, 2026-11-20] | Ruler value from 2026-11-12 confirmed; model 3.5 rejected. `constraints.csv` C14 updated |
+| C2: motor-lead entries | No slots in the side walls. Each motor wire passes through its arm-pivot recess at the frame-to-canopy seam and enters the cavity at about wall-top level | [measured: user, photos `pcb/photos/DSC00218.JPG` and `WhatsApp Image 2026-11-20 at 10.59.55 AM.jpeg`, 2026-11-20] | `constraints.csv` C18 updated. The wires come down from wall-top level to the motor connectors (E1 to E4); keep the connector edges free of tall parts so the wires can drop in |
+| C3: mounting holes | **1.5 mm** at the unchanged centres (1.2 / 22.3, 34.3 / 44.9): option A. Rim to the board edge 0.45 nominal; worst case 0.18 (standard outline) or 0.28 (high precision) | [decided: user, 2026-11-20] | The OEM board holes are 2.0 and the frame post holes are smaller than 2 (user, 2026-11-20); the screw passes a 1.5 hole freely (B8). The 2.0 hole left a 0.2 rim that JLCPCB's ±0.2 outline and ±0.075 hole-position tolerances could remove (`pcb/specs/design_rules.md` §6). `constraints.csv` B1 to B4 updated. **Pending:** the user updates `outline.dxf` (hole circles 1.5); `check_outline.py` fails on the hole diameter until then. The KiCad holes change in P2-7 |
+| C6: fuse figures | Not a measurement: settled in decision D-P2-13 in the decision session (Prompt 2) | — | Bench fuse 5 to 7.5 A (blueprint §3.1) and the board fuse (about 10 A, `motor_electrical.md`) answer different questions |
