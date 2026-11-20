@@ -1,0 +1,30 @@
+** Drc report for franken-e58.kicad_pcb **
+** Created on 2026-11-20T07:48:49 **
+** Report includes: Errors, Warnings, Exclusions **
+
+** Found 4 DRC violations **
+[lib_footprint_mismatch]: Footprint 'MountingHole_2mm' does not match copy in library 'MountingHole'
+    Local override; warning
+    @(101.2000 mm, 55.1000 mm): Footprint MH1
+[lib_footprint_mismatch]: Footprint 'MountingHole_2mm' does not match copy in library 'MountingHole'
+    Local override; warning
+    @(122.3000 mm, 65.7000 mm): Footprint MH4
+[lib_footprint_mismatch]: Footprint 'MountingHole_2mm' does not match copy in library 'MountingHole'
+    Local override; warning
+    @(122.3000 mm, 55.1000 mm): Footprint MH2
+[lib_footprint_mismatch]: Footprint 'MountingHole_2mm' does not match copy in library 'MountingHole'
+    Local override; warning
+    @(101.2000 mm, 65.7000 mm): Footprint MH3
+
+** Found 0 unconnected pads **
+
+** Found 0 Footprint errors **
+
+** Ignored checks **
+    - Footprint has no courtyard defined
+    - Track endpoint not centered on via
+    - Tuning profile track geometries
+    - Footprint doesn't match symbol's footprint filters
+    - Footprint component type doesn't match footprint pads
+
+** End of Report **
