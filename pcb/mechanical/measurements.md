@@ -1,6 +1,6 @@
 # Mechanical and electrical measurements (P2-1)
 
-**Status: interview complete and constraints signed off 2026-11-12.** Filled in during the P2-1 measurement interview (`docs/P2-1_package.md` §2). Signed-off values are copied into `constraints.csv`.
+**Status: interview complete and constraints signed off 2026-11-12; outline and cavity values revised 2026-11-20 from the 1:1 printout and the SOLIDWORKS model (see "Revision 2026-11-20" below), re-sign-off pending.** Filled in during the P2-1 measurement interview (`docs/P2-1_package.md` §2). Signed-off values are copied into `constraints.csv`. Rows superseded on 2026-11-20 keep their original reading for the record and point to the revision section.
 
 ## Datum and orientation
 
@@ -30,8 +30,8 @@ Photos go in `photos/` with a scale in frame, named like `oem_top.jpg`, `oem_bot
 
 | Item | Value | Tag | Note |
 |---|---|---|---|
-| Length (the longer side; runs nose to tail, so along **y** in the datum) | 46.5 mm | `[measured: ruler, 2026-11-12]` | Ruler precision 1 mm; reads between 46 and 47, so ±0.5 mm. Confirm from a scaled photo |
-| Width (across the fuselage, along **x**) | 23 mm | `[measured: ruler, 2026-11-12]` | ±0.5 mm |
+| Length (the longer side; runs nose to tail, so along **y** in the datum) | 46.5 mm | `[measured: ruler, 2026-11-12]` | Ruler precision 1 mm; reads between 46 and 47, so ±0.5 mm. **Superseded 2026-11-20: 47.0** (1:1 printout, see revision section) |
+| Width (across the fuselage, along **x**) | 23 mm | `[measured: ruler, 2026-11-12]` | ±0.5 mm. **Superseded 2026-11-20: 23.5** (1:1 printout) |
 | Thickness | 1.0 mm | `[measured: ruler, 2026-11-12]` | Ruler at 1 mm precision; 1.0 mm is the nearest standard FR-4 thickness. ±0.2 mm |
 | Corner radii | 0 (square, sharp corners) | `[measured: visual, 2026-11-12]` | |
 | Notches or cut-outs (position, size) | 2 large mounting notches on the lower half (towards y = 0); 4 separate screw holes on the upper half | `[measured: visual, 2026-11-12]` | Positions and sizes: see group B. Both are retained on the new board so it fits the frame |
@@ -44,6 +44,7 @@ Photos go in `photos/` with a scale in frame, named like `oem_top.jpg`, `oem_bot
 | Item | Value | Tag | Note |
 |---|---|---|---|
 | Number of screw posts or holes | 4 round holes near the nose end, plus 2 semicircular cut-outs near the tail end | `[measured: visual, 2026-11-12]` | Pattern is symmetric about the board centreline. Both features are retained on the new board |
+| **Holes 1 to 4 and cut-outs A and B: superseded 2026-11-20** | Holes at x = 1.2 / 22.3, y = 34.3 / 44.9, dia 2.0; cut-outs are U-slots 4.2 wide with a radius 2.1 round end at (2.4, 16) and (21.1, 16) | `[measured: 1:1 printout, 2026-11-20]` | See the revision section. The rows below are the 2026-11-12 readings |
 | Hole 1 (nose end, aircraft-left side, x = 0 edge) position and diameter | x = 1.35, y = 43.7, dia 1.5 | y `[measured: photo scaled on the 46.5 mm length, 2026-11-12]` ±0.5 mm; x and diameter `[measured: ruler gap and hole + photo, 2026-11-12]` ±0.3 mm | Hole centre 2.8 mm from the nose-end edge (photo). Corrected at sign-off: inner gap between the two holes across the width 18.8 mm (ruler), hole 1.5 mm (ruler, screw passes freely), so the cross pitch is 20.3 and x = (23 − 20.3)/2 = 1.35; rim to the edge 0.6 mm. Photo centres 1.15 to 1.3 mm agree. The earlier ruler values (pitch 21, centre 2 mm from the edge) were inconsistent with the 23 mm width and are superseded |
 | Hole 2 (nose end, aircraft-right side) position and diameter | x = 21.65, y = 43.7, dia 1.5 | same | Cross pitch hole 1 to hole 2: **20.3 mm** (18.8 gap + 1.5 hole) |
 | Hole 3 (aircraft-left side) position and diameter | x = 1.35, y = 33.0, dia 1.5 | same | Pitch hole 1 to hole 3 along the edge: **10.7 mm `[measured: ruler]`** |
@@ -63,9 +64,9 @@ Photos go in `photos/` with a scale in frame, named like `oem_top.jpg`, `oem_bot
 
 | Item | Value | Tag | Note |
 |---|---|---|---|
-| Internal width wall to wall at board level (along x) | about 26 mm | `[measured: ruler, 2026-11-12]` | Board 23 mm, so about 1.5 mm side clearance each side |
+| Internal width wall to wall at board level (along x) | about 26 mm | `[measured: ruler, 2026-11-12]` | Board 23 mm, so about 1.5 mm side clearance each side. **Revised 2026-11-20:** 26 holds only at the nose end; the walls flare to a 5.4 to 6.3 mm gap per side at y = 0 to 12 (model, user confirms about 6) |
 | Cavity length beyond the board | nose: board nose edge to the camera-compartment front wall about 10 mm (y = 46.5 to 56.5). Tail: board tail edge to the end of the slotted floor about 21 mm (y = 0 to −21), with frame screw posts at 15 mm behind the tail edge (y = −15) | `[measured: ruler, 2026-11-12]` | Usable extra length at the tail is limited by those posts |
-| Wall positions relative to the datum | x = −1.5 and x = 24.5 (from the 26 mm width, assuming the board is centred) | derived from the ruler width | Confirm centring at the 1:1 printout |
+| Wall positions relative to the datum | x = −1.5 and x = 24.5 (from the 26 mm width, assuming the board is centred) | derived from the ruler width | **Superseded 2026-11-20:** inner faces at x = −1.35 and 24.75 at the nose end, widening towards the tail (table in the revision section). Board centred within 0.05 mm |
 | Screw posts (four, camera compartment) | 18 mm from the camera-compartment floor to the post top on which the board sits | `[measured: ruler, 2026-11-12]` | So up to about 17 mm of depth is available **below** the board's nose half, less the camera board and ribbons that live there |
 | Cut-out pegs | 7 mm tall from the slotted floor; four fins that widen at 3.5 mm to form the shoulder the board rests on. The board's underside is therefore about 3.5 mm above the slotted floor and the board does not touch it. Pegs stand about 2 mm above the board top (7 − 3.5 − 1.0 = 2.5 derived) | `[measured: ruler, 2026-11-12]` | Keep a no-component ring around each cut-out for the fins. Bottom-side parts on the tail half must be under 3 mm tall |
 | Slotted floor height | about 14.5 mm above the camera-compartment floor (18 − 3.5) | derived | |
@@ -149,7 +150,7 @@ Procedure and safety rules: `docs/P2-1_package.md` §4 step 6. Props off, one mo
 | Battery header position confirmed by ruler | Centre pin at x = 15, y = 32 (bottom side) | [measured: ruler, 2026-11-12] | Replaces the photo value (14, 31) in D1 |
 | Any other OEM item the new board must keep a place for | None named | [measured: 2026-11-12] | |
 | USB-C envelope check: receptacle height (3.2 mm class) against cavity height (*verify against the connector datasheet in P2-3*) | Pass. Canopy clearance above the board top is 22 mm mid-board and 26 mm at the tail (group C); under the board 3.5 mm to the slotted floor on the tail half | [measured: ruler, 2026-11-12] | A mid-mount or top-mount receptacle fits with large margin |
-| USB-C envelope check: receptacle length (about 9 mm class) and reachable edge without removing the canopy | **Go, with a frame cut.** Receptacle on the aircraft-left long edge (x = 0) in the tail half, centre at y between 3 and 13, flush with the board edge. The frame side wall there is solid, reachable from outside, free of latches and wire channels, about 1 to 1.5 mm thick, and 1.5 mm from the board edge (cavity 26 mm, board 23 mm). A slot about 7 x 13 mm is cut in it (drill and file, not melted). Canopy is screwed on and has a flat free area, so a top-side vertical receptacle was the alternative; the user chose the side cut | [measured: ruler, 2026-11-12] | Zone: y = 3 to 13 keeps clear of the cut-out ring at y = 16 and the motor connectors at y = 20.5 and 28.5. Exact y and the receptacle part are chosen in P2-3 with the datasheet |
+| USB-C envelope check: receptacle length (about 9 mm class) and reachable edge without removing the canopy | **Go, with a frame cut.** Receptacle on the aircraft-left long edge (x = 0) in the tail half, centre at y between 3 and 13, flush with the board edge. The frame side wall there is solid, reachable from outside, free of latches and wire channels, about 1 to 1.5 mm thick, and 1.5 mm from the board edge (cavity 26 mm, board 23 mm). A slot about 7 x 13 mm is cut in it (drill and file, not melted). Canopy is screwed on and has a flat free area, so a top-side vertical receptacle was the alternative; the user chose the side cut | [measured: ruler, 2026-11-12] | Zone: y = 3 to 13 keeps clear of the cut-out ring at y = 16 and the motor connectors at y = 20.5 and 28.5. Exact y and the receptacle part are chosen in P2-3 with the datasheet. **Revised 2026-11-20:** the wall is about 6 mm from the board edge here, not 1.5. The zone is kept; the wall opening is cut large enough for the whole plug overmould to enter. Option for P2-2: widen the board locally on this edge to close the gap |
 
 ## Group I: Mass budget
 
@@ -164,6 +165,52 @@ Procedure and safety rules: `docs/P2-1_package.md` §4 step 6. Props off, one mo
 | Total flying mass (assembled aircraft, if available) | 85 assumed; 98 with a 15 % factor | [assumed] | Aircraft not assembled, no scale. The new board is budgeted at no more than the OEM board's 6 g; the budget is re-checked with a scale before P2-9 |
 | Decisions taken here | D-P2-04: IMU at the geometric centre of the board (aircraft cannot be assembled now, so no balance measurement). D-P2-07 preference: the user hand-solders the components | [measured: 2026-11-12] | Recorded in `pcb/decision_log.md` |
 
+## Revision 2026-11-20: 1:1 printout and SOLIDWORKS model
+
+**Sources.** (1) `outline.dxf`, printed 1:1 and laid on the OEM board: exact fit (user). It is now the reference outline. (2) `cavity.step`, the user's SOLIDWORKS assembly built around that outline: five bodies (frame cavity, canopy with plunger, board plate, power button, battery connector), origin at the datum. (3) The user's answers on 2026-11-20. Values read from the model are tagged `[measured: SOLIDWORKS model]`: the user built the model from the frame and states most dimensions are right to the millimetre, with a few known to be off where it does not matter. Where model and ruler disagree and the user has not settled it, both are kept and the design uses the more restrictive one.
+
+**Axes in the model.** SOLIDWORKS Top-plane mapping: board x = X, board y = −Z, z = Y, with z = 0 at the board **underside** (the seat). Board top at z = 1.0. (Note: the "Datum and orientation" section above takes z from the board top; the revision tables use the seat, as in the SOLIDWORKS brief.)
+
+**Checks run.** `pcb/tools/check_outline.py`: PASS against the revised CSV (units mm, one closed outline, 23.5 × 47.0, four 2.0 holes within 0.1). No two STEP bodies overlap; the board touches the frame only at the peg fin shoulders, the plunger tip touches the button top at z = 9, the battery connector clears the frame by 2.3.
+
+### Outline (`[measured: 1:1 printout on the OEM board, 2026-11-20]`)
+
+| Item | Was (2026-11-12) | Now | Note |
+|---|---|---|---|
+| Board, x × y | 23 × 46.5 | **23.5 × 47.0** | Ruler resolution 1 mm; printout governs |
+| Holes B1 to B4 | (1.35 / 21.65, 33.0 / 43.7), dia 1.5 | **(1.2 / 22.3, 34.3 / 44.9), dia 2.0** | Cross pitch 21.1, along-edge pitch 10.6. Dia 2.0 kept by the user: the countersunk Phillips head is larger than 2 mm. Rim from hole to board edge is **0.2 mm**: check against the fab's minimum hole-to-edge rule in P2-2 |
+| Cut-outs B5, B6 | 5.8 circle centred 2.0 inside each edge, mouth 4.3 | **U-slots**, 4.2 wide, round end radius 2.1 centred at (2.4, 16) and (21.1, 16), 4.5 deep from the edge | |
+
+### Cavity (`[measured: SOLIDWORKS model, 2026-11-20]` unless stated)
+
+| Item | Ruler (2026-11-12) | Model | Used for design |
+|---|---|---|---|
+| Board seat | posts | posts end 1.5 below the board; fins carry it | **Board rests on both the post tops and the fin shoulders at z = 0** `[measured: user confirmation, 2026-11-20]`. The model's post tops (and camera floor at −19.5) are a modelling error. The new board is **screwed to the four posts** for stability (decision log; diff B-P2-11 against D-P2-04) |
+| Cut-out pegs B9, B10 | dia 4, 19 apart, at (2.0, 16) / (21.0, 16) | pins dia 2.5 at (2.4, 15.9) / (21.0, 15.9), 18.6 apart; fin shoulders reach about 2.6 from the pin centre at the seat; pins 2.0 above the board top | Model. Radial clearance pin to slot about 0.8. Model detail: the left board peg stops at z = 0 while the other three rise to z = +3 (cosmetic) |
+| Wall gap per side (board edge to wall) | 1.5 everywhere | 1.3 at y = 47; 1.7 at y = 40; 2.1 at y = 33; 2.6 at y = 28.5; 3.75 at y = 20.5; 4.5 at y = 16; **5.4 to 6.3 at y = 0 to 12**; walls 1.0 thick | Model; about 6 at the USB-C zone confirmed by the user |
+| Wall top above the seat | 4.5 | 3.5 | Unresolved; 3.5 used for anything that must pass over the wall |
+| Slotted floor top below the seat | 3.5 | 3.05 (1 mm thick) | **3.0**: bottom-side parts on the tail half under 2.5 |
+| Floor step (M1) | 13, reference unresolved | **y = 22.8** | Model. Closes M1 |
+| Slotted floor tail end | y = −21 | y = −22.2 | Not board-critical |
+| Rear frame pegs | y = −15 | y = −15.9, finned, same pins as the board pegs | Not board-critical |
+| Small posts (C19) | exist | two each side at x = −2.2 and 25.6, y = ±7.8, dia 3, tops 9.5 below the seat | Model. Outside the outline and below it: no conflict. Closes C19 |
+| Camera floor / post height | 18 below the seat | 19.5 | **18** (ruler; see board seat) |
+| Camera adapter PCB | top 11 below the board underside | not modelled | **11**: the adapter, which also carries the bottom camera, stays in the frame (user, 2026-11-20) |
+| Camera-compartment front wall | y = 56.5 (10 ahead of the nose edge) | y = 77.0 (30 ahead) | Unresolved; not board-critical. Matters if the ToF breakout goes ahead of the board |
+| Canopy underside above the board top | 26 at y = 0; 22 from y = 23 to the front wall | 16.9 at y = 0; 18.6 at y = 23 to 38; 18.2 at y = 47; flat across | **Model (lower) values** as the top-side height limit |
+| Plunger and power button | (11, 38) | (11.5, 38.3); plunger tip dia 5, touches the 8 mm button at z = 9 | Model |
+| Battery header D1 | centre pin (15, 32) | centre pin (15.25, 31.75); contacts at x = 13.25 / 15.25 / 17.25; housing x 12 to 18.5, y 29.5 to 34, 6.0 deep below the underside | Model (agrees with the ruler within 0.25) |
+| Motor-lead wall slots (M8) | exist | not modelled | Still open |
+| Right-edge items E3, E4, F2 | x = 23 | the right edge is now x = 23.5 | Moved with the outline |
+
+### USB-C (D-P2-03) after the revision
+
+The wall is about 6 mm from the board edge at the USB-C zone (left edge, y = 3 to 13), not 1.5. The user keeps the zone and will cut a wall opening large enough for the whole plug overmould to enter. Moving the port nose-ward of the cut-out (gap 2 to 4 mm) does not close the gap either. **Option for P2-2:** widen the board locally on that edge to bring the receptacle to the wall. That changes the outline away from the OEM shape (SOLIDWORKS brief §4), so it is decided in P2-2, not here.
+
+### ToF idea (D-P2-06), recorded for P2-2
+
+The user proposes cutting a hole in the frame floor to align and mount the VL53L1X looking down. Not decided in P2-1. Open points for P2-2: where on the floor (the tail half is the battery bay; the nose-half well holds the camera adapter and bottom camera; the free floor ahead of the board depends on the unresolved front-wall position); the field of view and cover-window requirements from the VL53L1X datasheet; and the cable length from the board to a floor-mounted breakout (D-P2-06 already proposes a breakout on a connector).
+
 ## Sign-off
 
 | Item | Value |
@@ -171,3 +218,4 @@ Procedure and safety rules: `docs/P2-1_package.md` §4 step 6. Props off, one mo
 | `constraints.csv` signed off by | Eric |
 | Date | 2026-11-12 |
 | Basis | Groups A to I complete. Mounting holes B1 to B4 corrected at sign-off (centre 1.35 mm from the long edges, hole 1.5 mm, cross pitch 20.3 mm, from the 18.8 mm inner gap and the 1.5 mm hole; the earlier ruler values 21 and 2 were inconsistent with the 23 mm width). Open deviations: one stall reading per motor, no fuse, repeat deferred to Phase 3. |
+| Revision | 2026-11-20: A1, A2, B1 to B10, C1 to C19 notes, C20 (new), D1, E3, E4, F2, H1, H4, H5 revised from the 1:1 printout, the SOLIDWORKS model and the user's answers (section above). **Re-sign-off by Eric: pending** |

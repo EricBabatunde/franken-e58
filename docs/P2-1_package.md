@@ -119,6 +119,7 @@ Ask first, before anything else: **do you have digital calipers?** The blueprint
 | B-P2-07 | Phase 2 | "Shield board" | Single flight-controller board | D-P2-01 | Pending |
 | B-P2-08 | Phase 2 step 3 | Fixed 40 to 50 mil | Width calculated from the stall current | Real current | Pending |
 | B-P2-10 | §6.1, §6.2 | O1 to O4, R1 to R8 | Add O5 to O8, R9 to R11 | Phase 2 findings | Pending |
+| B-P2-11 | §3.3 (mechanical constraint), D-P2-04 | "Whole board soft-mounted" (D-P2-04); §3.3 asks for the IMU to be soft-mounted | Board screwed rigidly to the four frame posts. The §3.3 IMU soft mount is met another way, chosen in P2-2 (isolated IMU island using the reserved slot or cut-out option, or a separate IMU carrier), with the DLPF and notch filters as the fallback (R1) | User, 2026-11-20: board stability first. The 2.0 mm holes leave a 0.2 mm rim, so grommets cannot fit the OEM hole pattern anyway | Pending (P2-2) |
 
 Claude Code adds rows here as P2-1 uncovers conflicts, for example if the cavity cannot take a USB-C receptacle, the OEM board has features the blocks missed, or the measured stall current exceeds the AO3400A rating.
 

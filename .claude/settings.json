@@ -111,7 +111,7 @@
       "Bash(~/.platformio/penv/bin/pio device monitor:*)",
       "Edit(src/**)",
       "Edit(components/**)",
-      "Edit(tools/**)",
+      "Edit(/tools/**)",
       "Edit(web/**)",
       "Edit(data/**)",
       "Edit(platformio.ini)",
