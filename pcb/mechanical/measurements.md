@@ -1,6 +1,6 @@
 # Mechanical and electrical measurements (P2-1)
 
-**Status: interview complete and constraints signed off 2026-11-12; outline and cavity values revised 2026-11-20 from the 1:1 printout and the SOLIDWORKS model (see "Revision 2026-11-20" below), re-sign-off pending.** Filled in during the P2-1 measurement interview (`docs/P2-1_package.md` §2). Signed-off values are copied into `constraints.csv`. Rows superseded on 2026-11-20 keep their original reading for the record and point to the revision section.
+**Status: interview complete and constraints signed off 2026-11-12; outline and cavity values revised 2026-11-20 from the 1:1 printout and the SOLIDWORKS model (see "Revision 2026-11-20" below), re-signed off 2026-11-20.** Filled in during the P2-1 measurement interview (`docs/P2-1_package.md` §2). Signed-off values are copied into `constraints.csv`. Rows superseded on 2026-11-20 keep their original reading for the record and point to the revision section.
 
 ## Datum and orientation
 
@@ -218,4 +218,4 @@ The user proposes cutting a hole in the frame floor to align and mount the VL53L
 | `constraints.csv` signed off by | Eric |
 | Date | 2026-11-12 |
 | Basis | Groups A to I complete. Mounting holes B1 to B4 corrected at sign-off (centre 1.35 mm from the long edges, hole 1.5 mm, cross pitch 20.3 mm, from the 18.8 mm inner gap and the 1.5 mm hole; the earlier ruler values 21 and 2 were inconsistent with the 23 mm width). Open deviations: one stall reading per motor, no fuse, repeat deferred to Phase 3. |
-| Revision | 2026-11-20: A1, A2, B1 to B10, C1 to C19 notes, C20 (new), D1, E3, E4, F2, H1, H4, H5 revised from the 1:1 printout, the SOLIDWORKS model and the user's answers (section above). **Re-sign-off by Eric: pending** |
+| Revision | 2026-11-20: A1, A2, B1 to B10, C1 to C19 notes, C20 (new), D1, E3, E4, F2, H1, H4, H5 revised from the 1:1 printout, the SOLIDWORKS model and the user's answers (section above). **Re-signed off by Eric, 2026-11-20** |
