@@ -4,7 +4,7 @@
 
 Blueprint sections used: §2.1, §3.1 to §3.5, §4.8, Phase 2 (decision table D-P2-01 to D-P2-08, steps 1 to 4), O2 to O8, R2, R10, R11, Phase 3 step 2. Also read `docs/P2-1_package.md` (§7, §8), `pcb/specs/motor_electrical.md`, `pcb/mechanical/measurements.md`, `pcb/mechanical/constraints.csv` and `pcb/decision_log.md`.
 
-**Status: P2-2 in progress.** Prompt 1 (carry-in C1 to C6) done 2026-11-20; `outline.dxf` hole update (1.5 mm) pending from the user. Next: Prompt 2, decision session.
+**Status: P2-2 in progress.** Prompt 1 (carry-in C1 to C6) done 2026-11-20. Prompt 2 (decision session) done 2026-11-20: all eleven decisions recorded in `pcb/decision_log.md`, diffs B-P2-19 to B-P2-21 added, verify list in §7a. `outline.dxf` holes updated to 1.5 mm by the user; `check_outline.py` PASS 2026-11-20. Next: Prompt 3, `requirements.md`.
 
 **Credentials:** none.
 
@@ -123,8 +123,31 @@ and state the required thrust for a TWR target (tagged `[assumed]`) so Phase 4 c
 | B-P2-16 | §5 Phase 2 | Layer count open | Stack-up, thickness, copper (D-P2-10) | D-P2-10 | Pending |
 | B-P2-17 | §3.1, §3.2 | One fuse figure (5 to 7.5 A bench) | Bench fuse and board fuse with their purposes, fuse footprint and location (D-P2-12, D-P2-13) | The P2-1 figure of about 10 A answers a different question | Pending |
 | B-P2-18 | §6.1 | O3, O5, O6 open | Closed or deferred with the trigger | P2-2 decisions | Pending |
+| B-P2-19 | Intro, §2.1 Frame row, §5 Phase 2 (D-P2-05) | Camera kept in the frame, mechanical only (B-P2-06, applied) | Camera, adapter and camera board removed from this build; well empty except for the ToF view; camera only in a later revision | D-P2-05 amended by the user 2026-11-20 | Pending |
+| B-P2-20 | §2.1 ToF row, §5 Phase 2 (D-P2-06), Phase 5 step 1 | ToF breakout on a connector; printed downward mount | Phase 1-type breakout soldered to the board underside in the nose half, looking through the camera floor opening; the printed mount step is replaced by an opening check | D-P2-06 | Pending |
+| B-P2-21 | §5 Phase 2 (placement, new row D-P2-11) | Antenna edge open; OEM power button position fixed by the canopy plunger | WROOM-1 at the nose, antenna overhanging the nose edge about 6.5 mm into the 10 mm gap; no button under the plunger; battery insertion is the power switch | D-P2-11 | Pending |
 
 Claude Code adds rows as P2-2 uncovers conflicts, from B-P2-19. Numbering note (2026-11-20): D-P2-09 is the outline decision from P2-1, so the new decisions are D-P2-10 to D-P2-13; B-P2-12 and B-P2-13 were applied at the P2-1 gate, so their P2-2 follow-ups are B-P2-14 and B-P2-15.
+
+## 7a. Verify list (Prompt 2: figures recalled from memory, checked in P2-3 against files in `pcb/datasheets/MANIFEST.md`)
+
+| Item | Figure used | Used in |
+|---|---|---|
+| ESP32-S3-WROOM-1-N16R8 | Size about 18 × 25.5 × 3.1 mm; antenna section about 6.5 mm at one end with no pads under it; castellated pads; ground pad; mass; stock | D-P2-02, D-P2-11 |
+| Espressif hardware design guidelines | Antenna past the board edge preferred; keep-out on all layers; distance to metal | D-P2-11 |
+| ESP32-S3 / WROOM-1 supply current | Wi-Fi TX peak about 355 mA (JLCPCB listing for the MINI) | D-P2-08 |
+| ESP32-S3 native USB | D− GPIO 19, D+ GPIO 20 | D-P2-03 |
+| AP2112K-3.3 | 600 mA; dropout about 250 mV; regulates above about 3.55 V; SOT-23-5 θJA about 250 °C/W | D-P2-08, R2 dropout item |
+| MPU-6500 | QFN-24 3 × 3 mm, 0.4 mm pitch; gyro and accelerometer DLPF paths and sample rates; lifecycle | D-P2-04, D-P2-07, D-P2-10 |
+| VL53L1X | 27° field of view; LGA package; cover-window crosstalk guidance (ST) | D-P2-06 |
+| USB-C plug and receptacle | Plug shell protrusion about 6.5 mm; overmould about 12 × 6.5 mm; shell about 9.5 × 3.5 mm; 16-pin receptacle 0.5 mm pitch | D-P2-03 |
+| U.FL | Mating-cycle rating (only relevant if D-P2-11 is reopened) | D-P2-11 |
+| Fuses | Derating about 75 %; fast-blow time-current points (140 %, 200 %); melting I²t; interrupt rating; SMD fuse resistance a few mΩ; PTC resistance tens of mΩ | D-P2-12, D-P2-13 |
+| Small slide switches | Rated well under 1 A | D-P2-11 (not used) |
+| AO3400A, SS34 | As listed in `pcb/specs/motor_electrical.md` §5 | D-P2-12 |
+| IPC-2221 | External-layer formula and constants | D-P2-10, D-P2-12 |
+
+Assumed values introduced in Prompt 2 (listed again in the stage report): logic current 150 mA average, 400 mA peak, 0.5 A in the fuse budget, about 100 mA idle with Wi-Fi; pack R_int 0.1 Ω; motor speed 20 000 to 40 000 rpm (330 to 670 Hz); USB-C tab about 5 mm over y 2 to 14 and 0.5 mm wall clearance; FR4 density about 1.85 g/cm³; antenna mass 0.5 to 1 g; ToF breakout plus connector about 1 g; spin-up pulse about 50 ms; 4-layer price small.
 
 ## 8. Results
 

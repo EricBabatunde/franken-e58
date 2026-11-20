@@ -75,4 +75,4 @@ Re-check this page before ordering (P2-9). It is a live web page, and it contrad
 
 **Decision (user, 2026-11-20, P2-2 C3): option A.** Holes become 1.5 mm at the same centres, giving a 0.45 mm rim nominal. In the worst case the rim is 0.45 − 0.2 − 0.075 = 0.18 mm with the standard outline tolerance, or 0.28 mm with high precision. The screw passes a 1.5 mm hole freely (B8), and the 2.3 mm head clamps on a 0.4 mm ring. Options not taken: B (1.6 mm), C (open notches to the edge, kept as the fallback if a strip cracks) and D (keep 2.0).
 
-Still to do: the user updates `outline.dxf`, then `check_outline.py` is rerun; the KiCad holes change in P2-7. Ordering with the standard outline tolerance is acceptable; high precision is optional.
+Done 2026-11-20: the user updated `outline.dxf` to 1.5 mm holes and `check_outline.py` passes. Still to do: the KiCad holes change in P2-7. Ordering with the standard outline tolerance is acceptable; high precision is optional.
